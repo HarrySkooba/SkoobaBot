@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import 'dotenv/config';
+import Database from 'better-sqlite3';
+const databasePath = process.env.DATABASE_PATH ?? './data/skooba.sqlite';
+const dbDirectory = path.dirname(databasePath);
+fs.mkdirSync(dbDirectory, { recursive: true });
+export const db = new Database(databasePath);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
