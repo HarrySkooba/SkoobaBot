@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
 import './database/migrate.js';
 import { env } from './env.js';
 import { handleApplicationButton, handleApplicationCommand, handleApplicationModal } from './features/applications.js';
@@ -6,6 +6,7 @@ import { handleCheatButton, handleCheatCommand } from './features/cheatChecks.js
 import { handleEventButton, handleEventCommand, startReminderScheduler } from './features/events.js';
 import { handleProfileButton, handleProfileCommand } from './features/playerProfiles.js';
 import { handleSettingsButton, handleSettingsCommand } from './features/settings.js';
+import { registerGuildCommands } from './registerCommands.js';
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -16,8 +17,11 @@ const client = new Client({
     ],
     partials: [Partials.Channel],
 });
-client.once('ready', () => {
+client.once(Events.ClientReady, async () => {
     console.log(`Skooba bot logged in as ${client.user?.tag}`);
+    await registerGuildCommands().catch((error) => {
+        console.error('Failed to register guild commands:', error);
+    });
     startReminderScheduler(client);
 });
 client.on('interactionCreate', async (interaction) => {

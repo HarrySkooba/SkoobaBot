@@ -10,7 +10,7 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "db:migrate": "tsx src/database/migrate.ts",
-    "commands:deploy": "tsx src/deploy-commands.ts"
+    "commands:deploy": "node dist/deploy-commands.js"
   },
   "keywords": [],
   "author": "",
