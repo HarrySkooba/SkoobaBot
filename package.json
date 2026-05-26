@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "postinstall": "node -e \"console.log('Skipping postinstall build; dist is committed for hosting')\"",
     "build": "tsc",
     "check": "tsc --noEmit",
     "db:migrate": "tsx src/database/migrate.ts",
