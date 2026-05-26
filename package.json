@@ -1,0 +1,30 @@
+{
+  "name": "huntclub",
+  "version": "1.0.0",
+  "description": "Discord bot for the Skooba family server.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "postinstall": "npm run build",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "db:migrate": "tsx src/database/migrate.ts",
+    "commands:deploy": "tsx src/deploy-commands.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3"
+  }
+}
