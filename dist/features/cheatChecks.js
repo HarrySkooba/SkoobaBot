@@ -145,14 +145,35 @@ async function resolveCheck(interaction, checkId, action) {
     db.prepare('UPDATE cheat_checks SET status = ?, hunter_id = ?, resolved_at = unixepoch(), result = ?, updated_at = unixepoch() WHERE id = ?').run(status, interaction.user.id, status, checkId);
     if (action === 'clean') {
         const player = await interaction.guild.members.fetch(row.user_id).catch(() => null);
-        const grantRoleId = getRoleRule(interaction.guild.id, 'cheat_clean').grantRoleId ?? getSetting(interaction.guild.id, 'verified_role_id');
-        const removeRoleId = getRoleRule(interaction.guild.id, 'cheat_clean').checkRoleId ?? getSetting(interaction.guild.id, 'unverified_role_id');
+        const cheatCleanRule = getRoleRule(interaction.guild.id, 'cheat_clean');
+        const grantRoleId = cheatCleanRule.grantRoleId ?? getSetting(interaction.guild.id, 'verified_role_id');
+        const removeRoleIds = uniqueRoleIds([cheatCleanRule.checkRoleId, getSetting(interaction.guild.id, 'unverified_role_id')]);
         if (player) {
-            if (removeRoleId) {
-                await player.roles.remove(removeRoleId).catch(() => undefined);
+            const removedRoleIds = [];
+            const failedRemoveRoleIds = [];
+            for (const removeRoleId of removeRoleIds) {
+                if (!player.roles.cache.has(removeRoleId)) {
+                    continue;
+                }
+                const removed = await player.roles.remove(removeRoleId).then(() => true, (error) => {
+                    console.error(`Failed to remove role ${removeRoleId} from ${player.id}:`, error);
+                    return false;
+                });
+                if (removed) {
+                    removedRoleIds.push(removeRoleId);
+                }
+                else {
+                    failedRemoveRoleIds.push(removeRoleId);
+                }
             }
             if (grantRoleId) {
                 await player.roles.add(grantRoleId).catch(() => undefined);
+            }
+            if (failedRemoveRoleIds.length > 0) {
+                await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: не удалось снять роли ${failedRemoveRoleIds.map((roleId) => `<@&${roleId}>`).join(', ')} с <@${player.id}>. Проверь, что роль бота выше этих ролей.`);
+            }
+            if (removedRoleIds.length > 0) {
+                await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: сняты роли ${removedRoleIds.map((roleId) => `<@&${roleId}>`).join(', ')} с <@${player.id}>.`);
             }
             await safeDm(player, 'Проверка завершена: ты чист. Роль Verified выдана.');
         }
@@ -216,4 +237,7 @@ async function notifyCheatHunters(interaction, checkId) {
         }
     }
     await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `DM CheatHunter по заявке #${checkId}: отправлено ${sent}, не доставлено ${failed}.`);
+}
+function uniqueRoleIds(roleIds) {
+    return [...new Set(roleIds.filter((roleId) => Boolean(roleId)))];
 }
