@@ -1,8 +1,8 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, } from 'discord.js';
 import { db } from '../database/db.js';
-import { setSetting } from '../database/settings.js';
+import { getSetting, setSetting } from '../database/settings.js';
 import { isApplicationsOpen, refreshApplicationPanel, sendApplicationPanel } from '../discord/applicationPanelV2.js';
-import { audit, getConfiguredTextChannel, isStaff, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
+import { audit, getConfiguredTextChannel, isStaff, privateReply, safeDm, sendToConfiguredChannel, uniqueRoleIds, } from '../discord/helpers.js';
 import { grantApplicationAcceptRoles } from './roleRecovery.js';
 export async function handleApplicationCommand(interaction) {
     if (interaction.commandName === 'application-intake') {
@@ -81,9 +81,18 @@ export async function handleApplicationButton(interaction) {
     }
     const [, action, id] = interaction.customId.split(':');
     const applicationId = Number(id);
-    const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!member || !isStaff(member)) {
         await interaction.reply(privateReply('Действия с заявками доступны только стаффу.'));
+        return true;
+    }
+    const application = getApplication(interaction.guild.id, applicationId);
+    if (!application) {
+        await interaction.reply(privateReply('Заявка не найдена.'));
+        return true;
+    }
+    if (application.status === 'accepted' || application.status === 'rejected') {
+        await interaction.reply(privateReply('Заявка уже закрыта.'));
         return true;
     }
     if (action === 'call') {
@@ -108,6 +117,7 @@ export async function handleApplicationModal(interaction) {
             await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
             return true;
         }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const answers = {
             identity: interaction.fields.getTextInputValue('identity'),
             majestic_experience: interaction.fields.getTextInputValue('majestic_experience'),
@@ -119,19 +129,36 @@ export async function handleApplicationModal(interaction) {
             .prepare('INSERT INTO applications (guild_id, user_id, answers_json) VALUES (?, ?, ?)')
             .run(interaction.guild.id, interaction.user.id, JSON.stringify(answers));
         const applicationId = Number(result.lastInsertRowid);
-        await publishApplication(interaction, applicationId, answers);
+        await publishApplication(interaction.guild, applicationId, interaction.user.id, answers);
         audit(interaction.guild.id, 'application.created', { applicationId, answers }, interaction.user.id, interaction.user.id);
-        await interaction.reply(privateReply('Заявка отправлена. Ожидай ответа стаффа.'));
+        await interaction.editReply('Заявка отправлена. Ожидай ответа стаффа.');
         return true;
     }
     if (interaction.customId.startsWith('application-call:')) {
+        if (!interaction.guild) {
+            await interaction.reply(privateReply('Заявки работают только на сервере.'));
+            return true;
+        }
         const applicationId = Number(interaction.customId.split(':')[1]);
+        const application = getApplication(interaction.guild.id, applicationId);
+        if (!application) {
+            await interaction.reply(privateReply('Заявка не найдена.'));
+            return true;
+        }
+        if (application.status === 'accepted' || application.status === 'rejected') {
+            await interaction.reply(privateReply('Заявка уже закрыта.'));
+            return true;
+        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const scheduledFor = interaction.fields.getTextInputValue('scheduled_for');
         const notes = interaction.fields.getTextInputValue('notes');
         db.prepare('INSERT INTO call_schedules (application_id, scheduled_by, scheduled_for, notes) VALUES (?, ?, ?, ?)').run(applicationId, interaction.user.id, scheduledFor, notes);
         db.prepare('UPDATE applications SET status = ?, reviewer_id = ?, updated_at = unixepoch() WHERE id = ?').run('call_scheduled', interaction.user.id, applicationId);
-        await interaction.reply(privateReply('Обзвон назначен.'));
-        await notifyApplicationUser(interaction, applicationId, `Тебе назначен обзвон: ${scheduledFor}${notes ? `\nКомментарий: ${notes}` : ''}`);
+        await refreshReviewMessage(interaction.guild, applicationId);
+        audit(interaction.guild.id, 'application.call_scheduled', { applicationId, scheduledFor, notes }, interaction.user.id, application.user_id);
+        await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: обзвон назначен модератором <@${interaction.user.id}> на ${scheduledFor}.`);
+        await notifyApplicationUser(interaction.guild, applicationId, `Тебе назначен обзвон: ${scheduledFor}${notes ? `\nКомментарий: ${notes}` : ''}`);
+        await interaction.editReply('Обзвон назначен. Сообщение заявки обновлено.');
         return true;
     }
     return false;
@@ -150,57 +177,198 @@ function inputRow(customId, label, style, options = {}) {
 function truncateEmbedField(value, max = 1024) {
     return value.length > max ? `${value.slice(0, max - 3)}...` : value;
 }
-async function publishApplication(interaction, applicationId, answers) {
-    if (!interaction.guild) {
+function parseAnswers(answersJson) {
+    return JSON.parse(answersJson);
+}
+function extractApplicantNick(answers) {
+    const identity = answers.identity ?? '';
+    const nick = identity.split('|')[0]?.trim();
+    return nick || 'Игрок';
+}
+function getApplication(guildId, applicationId) {
+    return db.prepare('SELECT * FROM applications WHERE id = ? AND guild_id = ?').get(applicationId, guildId);
+}
+function getLatestCallSchedule(applicationId) {
+    return db
+        .prepare('SELECT scheduled_for, notes FROM call_schedules WHERE application_id = ? ORDER BY created_at DESC LIMIT 1')
+        .get(applicationId);
+}
+function applicationStatusLabel(status, scheduledFor) {
+    switch (status) {
+        case 'pending':
+            return 'Ожидает рассмотрения';
+        case 'call_scheduled':
+            return scheduledFor ? `Обзвон назначен: ${scheduledFor}` : 'Обзвон назначен';
+        case 'accepted':
+            return 'Принята';
+        case 'rejected':
+            return 'Отклонена';
+        default:
+            return status;
+    }
+}
+function applicationStatusColor(status) {
+    switch (status) {
+        case 'accepted':
+            return 0x57f287;
+        case 'rejected':
+            return 0xed4245;
+        case 'call_scheduled':
+            return 0x5865f2;
+        default:
+            return 0xf1c40f;
+    }
+}
+function buildApplicationTitle(applicationId, answers, status) {
+    const nick = extractApplicantNick(answers);
+    if (status === 'accepted') {
+        return `Заявка #${applicationId}: принята — ${nick}`;
+    }
+    if (status === 'rejected') {
+        return `Заявка #${applicationId}: отклонена — ${nick}`;
+    }
+    return `Заявка #${applicationId} — ${nick}`;
+}
+function buildApplicationEmbed(application, answers, options) {
+    const schedule = getLatestCallSchedule(application.id);
+    const status = options?.resolvedAction
+        ? options.resolvedAction === 'accept'
+            ? 'accepted'
+            : 'rejected'
+        : application.status;
+    const statusText = applicationStatusLabel(status, schedule?.scheduled_for);
+    const descriptionLines = [`Игрок: <@${application.user_id}>`];
+    if (options?.resolvedById) {
+        descriptionLines.push(`Решение: ${options.resolvedAction === 'accept' ? 'принята' : 'отклонена'} модератором <@${options.resolvedById}>`);
+    }
+    const embed = new EmbedBuilder()
+        .setTitle(buildApplicationTitle(application.id, answers, status))
+        .setDescription(descriptionLines.join('\n'))
+        .setColor(applicationStatusColor(status))
+        .addFields({ name: 'Статус', value: statusText });
+    if (schedule?.notes) {
+        embed.addFields({ name: 'Комментарий к обзвону', value: truncateEmbedField(schedule.notes, 256) });
+    }
+    embed
+        .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity ?? '—') }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience ?? '—') }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families ?? '—') }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source ?? '—') }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks ?? '—') });
+    return embed;
+}
+function reviewButtons(applicationId) {
+    return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`application:call:${applicationId}`).setLabel('Назначить обзвон').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`application:accept:${applicationId}`).setLabel('Принять').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`application:reject:${applicationId}`).setLabel('Отклонить').setStyle(ButtonStyle.Danger));
+}
+function buildReviewChannelContent(guildId) {
+    const staffRoleId = getSetting(guildId, 'staff_role_id');
+    if (!staffRoleId) {
+        return { content: 'Новая заявка в семью Skooba.', allowedMentions: { parse: [] } };
+    }
+    return {
+        content: `<@&${staffRoleId}> новая заявка в семью Skooba.`,
+        allowedMentions: { roles: [staffRoleId] },
+    };
+}
+async function notifyStaffAndAdmins(guild, applicationId, applicantId, applicantNick) {
+    const roleIds = uniqueRoleIds([getSetting(guild.id, 'staff_role_id'), getSetting(guild.id, 'admin_role_id')]);
+    if (!roleIds.length) {
         return;
     }
-    const channel = await getConfiguredTextChannel(interaction.guild, 'application_review_channel_id');
+    const members = await guild.members.fetch();
+    const notified = new Set();
+    for (const member of members.values()) {
+        if (member.user.bot || notified.has(member.id)) {
+            continue;
+        }
+        if (!roleIds.some((roleId) => member.roles.cache.has(roleId))) {
+            continue;
+        }
+        notified.add(member.id);
+        await safeDm(member, `Новая заявка в семью Skooba #${applicationId} от **${applicantNick}** (<@${applicantId}>). Проверь канал рассмотрения заявок.`);
+    }
+}
+async function publishApplication(guild, applicationId, userId, answers) {
+    const channel = await getConfiguredTextChannel(guild, 'application_review_channel_id');
     if (!channel) {
         return;
     }
-    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`application:call:${applicationId}`).setLabel('Назначить обзвон').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`application:accept:${applicationId}`).setLabel('Принять').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`application:reject:${applicationId}`).setLabel('Отклонить').setStyle(ButtonStyle.Danger));
+    const application = getApplication(guild.id, applicationId);
+    if (!application) {
+        return;
+    }
+    const reviewContent = buildReviewChannelContent(guild.id);
     const message = await channel.send({
-        embeds: [
-            new EmbedBuilder()
-                .setTitle(`Заявка #${applicationId}`)
-                .setDescription(`<@${interaction.user.id}>`)
-                .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity) }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience) }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families) }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source) }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks) })
-                .setColor(0xf1c40f),
-        ],
-        components: [row],
+        ...reviewContent,
+        embeds: [buildApplicationEmbed(application, answers)],
+        components: [reviewButtons(applicationId)],
     });
     db.prepare('UPDATE applications SET review_message_id = ? WHERE id = ?').run(message.id, applicationId);
+    await notifyStaffAndAdmins(guild, applicationId, userId, extractApplicantNick(answers));
+}
+async function refreshReviewMessage(guild, applicationId) {
+    const application = getApplication(guild.id, applicationId);
+    if (!application?.review_message_id) {
+        return;
+    }
+    const channel = await getConfiguredTextChannel(guild, 'application_review_channel_id');
+    if (!channel) {
+        return;
+    }
+    const message = await channel.messages.fetch(application.review_message_id).catch(() => null);
+    if (!message) {
+        return;
+    }
+    const answers = parseAnswers(application.answers_json);
+    const isClosed = application.status === 'accepted' || application.status === 'rejected';
+    await message.edit({
+        embeds: [
+            buildApplicationEmbed(application, answers, {
+                resolvedById: isClosed ? application.reviewer_id ?? undefined : undefined,
+                resolvedAction: application.status === 'accepted' ? 'accept' : application.status === 'rejected' ? 'reject' : undefined,
+            }),
+        ],
+        components: isClosed ? [] : [reviewButtons(applicationId)],
+    });
 }
 async function resolveApplication(interaction, applicationId, action) {
     if (!interaction.guild) {
         await interaction.reply(privateReply('Сервер не найден.'));
         return;
     }
-    const row = db.prepare('SELECT user_id FROM applications WHERE id = ? AND guild_id = ?').get(applicationId, interaction.guild.id);
-    if (!row) {
-        await interaction.reply(privateReply('Заявка не найдена.'));
+    await interaction.deferUpdate();
+    const application = getApplication(interaction.guild.id, applicationId);
+    if (!application) {
+        await interaction.followUp(privateReply('Заявка не найдена.'));
         return;
     }
     db.prepare('UPDATE applications SET status = ?, reviewer_id = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'accept' ? 'accepted' : 'rejected', interaction.user.id, applicationId);
     if (action === 'accept') {
-        const member = await interaction.guild.members.fetch(row.user_id).catch(() => null);
+        const member = await interaction.guild.members.fetch(application.user_id).catch(() => null);
         if (member) {
             await grantApplicationAcceptRoles(member);
         }
     }
-    audit(interaction.guild.id, `application.${action}`, { applicationId }, interaction.user.id, row.user_id);
+    const answers = parseAnswers(application.answers_json);
+    const updatedApplication = getApplication(interaction.guild.id, applicationId);
+    audit(interaction.guild.id, `application.${action}`, { applicationId }, interaction.user.id, application.user_id);
     await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: ${action === 'accept' ? 'принята' : 'отклонена'} модератором <@${interaction.user.id}>.`);
-    await notifyApplicationUser(interaction, applicationId, action === 'accept' ? 'Твоя заявка в Skooba принята.' : 'Твоя заявка в Skooba отклонена.');
-    await interaction.update({ content: `Заявка #${applicationId}: ${action === 'accept' ? 'принята' : 'отклонена'}.`, embeds: [], components: [] });
-}
-async function notifyApplicationUser(interaction, applicationId, content) {
-    if (!interaction.guild) {
-        return;
+    await notifyApplicationUser(interaction.guild, applicationId, action === 'accept' ? 'Твоя заявка в Skooba принята.' : 'Твоя заявка в Skooba отклонена.');
+    if (interaction.message) {
+        await interaction.message
+            .edit({
+            embeds: [
+                buildApplicationEmbed(updatedApplication, answers, {
+                    resolvedById: interaction.user.id,
+                    resolvedAction: action,
+                }),
+            ],
+            components: [],
+        })
+            .catch(() => undefined);
     }
-    const row = db.prepare('SELECT user_id FROM applications WHERE id = ? AND guild_id = ?').get(applicationId, interaction.guild.id);
+}
+async function notifyApplicationUser(guild, applicationId, content) {
+    const row = db.prepare('SELECT user_id FROM applications WHERE id = ? AND guild_id = ?').get(applicationId, guild.id);
     if (!row) {
         return;
     }
-    const member = await interaction.guild.members.fetch(row.user_id).catch(() => null);
+    const member = await guild.members.fetch(row.user_id).catch(() => null);
     await member?.send(content).catch(() => undefined);
 }
