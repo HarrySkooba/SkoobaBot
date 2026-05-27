@@ -17,7 +17,7 @@ export async function handleProfileCommand(interaction) {
             embeds: [
                 new EmbedBuilder()
                     .setTitle('Личный профиль игрока')
-                    .setDescription('Нажми кнопку, чтобы создать личный канал профиля в категории Тир 3.')
+                    .setDescription('Нажми кнопку, чтобы создать личный канал профиля в категории Тир 3. Нужны роли семьи и Verified.')
                     .setColor(0x57f287),
             ],
             components: [
@@ -51,8 +51,16 @@ export async function handleProfileButton(interaction) {
     }
     if (interaction.customId === 'profile:create') {
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!member || !hasConfiguredRole(member, 'family_role_id')) {
+        if (!member) {
+            await interaction.reply(privateReply('Не удалось получить данные участника на сервере.'));
+            return true;
+        }
+        if (!hasConfiguredRole(member, 'family_role_id')) {
             await interaction.reply(privateReply('Профиль могут создать только участники с ролью семьи.'));
+            return true;
+        }
+        if (!hasConfiguredRole(member, 'verified_role_id')) {
+            await interaction.reply(privateReply('Профиль могут создать только участники с ролью Verified.'));
             return true;
         }
         const existing = db.prepare('SELECT channel_id FROM player_profiles WHERE guild_id = ? AND user_id = ?').get(interaction.guild.id, interaction.user.id);
@@ -81,24 +89,47 @@ export async function handleProfileButton(interaction) {
 function canPromote(member) {
     return isAdmin(member) || hasConfiguredRole(member, 'mentor_role_id');
 }
+function buildProfileChannelOverwrites(guild, ownerUserId) {
+    const viewAndHistory = [
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.ReadMessageHistory,
+    ];
+    const mentorRoleId = getSetting(guild.id, 'mentor_role_id');
+    const adminRoleId = getSetting(guild.id, 'admin_role_id');
+    return [
+        { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        {
+            id: ownerUserId,
+            allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages],
+        },
+        ...(mentorRoleId
+            ? [{ id: mentorRoleId, allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages] }]
+            : []),
+        ...(adminRoleId
+            ? [
+                {
+                    id: adminRoleId,
+                    allow: [
+                        ...viewAndHistory,
+                        PermissionsBitField.Flags.SendMessages,
+                        PermissionsBitField.Flags.ManageChannels,
+                    ],
+                },
+            ]
+            : []),
+    ];
+}
 async function createProfileChannel(interaction) {
     if (!interaction.guild) {
         throw new Error('Missing guild');
     }
     const tier = 3;
     const categoryId = getTierCategoryId(interaction.guild.id, tier);
-    const mentorRoleId = getSetting(interaction.guild.id, 'mentor_role_id');
-    const adminRoleId = getSetting(interaction.guild.id, 'admin_role_id');
     const channel = await interaction.guild.channels.create({
         name: `profile-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90),
         type: ChannelType.GuildText,
         parent: categoryId ?? undefined,
-        permissionOverwrites: [
-            { id: interaction.guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-            { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
-            ...(mentorRoleId ? [{ id: mentorRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] }] : []),
-            ...(adminRoleId ? [{ id: adminRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageChannels] }] : []),
-        ],
+        permissionOverwrites: buildProfileChannelOverwrites(interaction.guild, interaction.user.id),
     });
     for (const name of ['отчет капт', 'отчет мцл', 'отчет рп']) {
         await channel.threads.create({ name, autoArchiveDuration: 10080 }).catch(() => undefined);
