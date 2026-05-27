@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, } from 'discord.js';
 import { db } from '../database/db.js';
 import { getRoleRule, getSetting } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm } from '../discord/helpers.js';
@@ -61,11 +61,12 @@ export async function handleCheatButton(interaction) {
             await interaction.reply(privateReply(`Ты уже находишься в очереди проверки #${existing.id}.`));
             return true;
         }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const result = db.prepare('INSERT INTO cheat_checks (guild_id, user_id) VALUES (?, ?)').run(interaction.guild.id, interaction.user.id);
         const checkId = Number(result.lastInsertRowid);
         await publishCheatCheck(interaction, checkId);
         audit(interaction.guild.id, 'cheat_check.created', { checkId }, interaction.user.id, interaction.user.id);
-        await interaction.reply(privateReply('Заявка на проверку отправлена в лист ожидания.'));
+        await interaction.editReply('Заявка на проверку отправлена в лист ожидания.');
         return true;
     }
     if (!canHandleCheat(member)) {

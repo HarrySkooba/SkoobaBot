@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageFlags, Partials } from 'discord.js';
 import './database/migrate.js';
 import { env } from './env.js';
 import { handleApplicationButton, handleApplicationCommand, handleApplicationModal } from './features/applications.js';
@@ -35,7 +35,7 @@ client.on('interactionCreate', async (interaction) => {
       if (await handleCheatCommand(interaction)) return;
       if (await handleProfileCommand(interaction)) return;
       if (await handleEventCommand(interaction)) return;
-      await interaction.reply({ content: 'Команда пока не обработана.', ephemeral: true });
+      await interaction.reply({ content: 'Команда пока не обработана.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -45,22 +45,22 @@ client.on('interactionCreate', async (interaction) => {
       if (await handleCheatButton(interaction)) return;
       if (await handleProfileButton(interaction)) return;
       if (await handleEventButton(interaction)) return;
-      await interaction.reply({ content: 'Кнопка пока не обработана.', ephemeral: true });
+      await interaction.reply({ content: 'Кнопка пока не обработана.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (interaction.isModalSubmit()) {
       if (await handleApplicationModal(interaction)) return;
-      await interaction.reply({ content: 'Форма пока не обработана.', ephemeral: true });
+      await interaction.reply({ content: 'Форма пока не обработана.', flags: MessageFlags.Ephemeral });
     }
   } catch (error) {
     console.error(error);
     const message = 'Произошла ошибка при обработке действия. Проверь логи бота.';
     if (interaction.isRepliable()) {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: message, ephemeral: true }).catch(() => undefined);
+        await interaction.followUp({ content: message, flags: MessageFlags.Ephemeral }).catch(() => undefined);
       } else {
-        await interaction.reply({ content: message, ephemeral: true }).catch(() => undefined);
+        await interaction.reply({ content: message, flags: MessageFlags.Ephemeral }).catch(() => undefined);
       }
     }
   }
