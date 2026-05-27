@@ -73,9 +73,7 @@ export async function handleApplicationButton(interaction) {
             placeholder: '15 server - 1год, 09 server - 2года',
         }), inputRow('families', 'В каких семьях состоял и почему ушел', TextInputStyle.Paragraph, {
             placeholder: 'Название - Причина',
-        }), inputRow('schedule', 'Часовой пояс | Средний онлайн', TextInputStyle.Short, {
-            placeholder: '+4 | 5-9',
-        }), inputRow('rollbacks', 'Откаты', TextInputStyle.Paragraph, {
+        }), inputRow('referral_source', 'Откуда узнали о семье?', TextInputStyle.Paragraph), inputRow('rollbacks', 'Откаты', TextInputStyle.Paragraph, {
             placeholder: 'GG - ссылка, MCL - ссылка, CAPT - ссылка',
         }));
         await interaction.showModal(modal);
@@ -114,7 +112,7 @@ export async function handleApplicationModal(interaction) {
             identity: interaction.fields.getTextInputValue('identity'),
             majestic_experience: interaction.fields.getTextInputValue('majestic_experience'),
             families: interaction.fields.getTextInputValue('families'),
-            schedule: interaction.fields.getTextInputValue('schedule'),
+            referral_source: interaction.fields.getTextInputValue('referral_source'),
             rollbacks: interaction.fields.getTextInputValue('rollbacks'),
         };
         const result = db
@@ -166,7 +164,7 @@ async function publishApplication(interaction, applicationId, answers) {
             new EmbedBuilder()
                 .setTitle(`Заявка #${applicationId}`)
                 .setDescription(`<@${interaction.user.id}>`)
-                .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity) }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience) }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families) }, { name: 'Часовой пояс | Онлайн', value: truncateEmbedField(answers.schedule) }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks) })
+                .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity) }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience) }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families) }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source) }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks) })
                 .setColor(0xf1c40f),
         ],
         components: [row],
