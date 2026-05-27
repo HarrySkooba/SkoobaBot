@@ -95,8 +95,11 @@ async function publishCheatCheck(interaction, checkId) {
     if (!channel) {
         return;
     }
+    const cheatHunterRoleId = getSetting(interaction.guild.id, 'cheat_hunter_role_id');
     const row = cheatButtons(checkId);
     const message = await channel.send({
+        content: cheatHunterRoleId ? `<@&${cheatHunterRoleId}> новая заявка на проверку.` : 'Новая заявка на проверку.',
+        allowedMentions: cheatHunterRoleId ? { roles: [cheatHunterRoleId] } : { parse: [] },
         embeds: [
             new EmbedBuilder()
                 .setTitle(`Проверка на читы #${checkId}`)
@@ -106,6 +109,7 @@ async function publishCheatCheck(interaction, checkId) {
         components: [row],
     });
     db.prepare('UPDATE cheat_checks SET queue_message_id = ? WHERE id = ?').run(message.id, checkId);
+    await notifyCheatHunters(interaction, checkId);
 }
 function cheatButtons(checkId) {
     return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`cheat:call:${checkId}`).setLabel('Вызвать').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`cheat:clean:${checkId}`).setLabel('Игрок чист').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`cheat:noshow:${checkId}`).setLabel('Не явился').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cheat:reject:${checkId}`).setLabel('Отклонить').setStyle(ButtonStyle.Danger));
@@ -179,4 +183,30 @@ async function removePlayerFromQueue(interaction) {
     audit(interaction.guild.id, 'cheat_check.removed', { checkId: row.id, reason }, interaction.user.id, player.id);
     await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${row.id}: игрок <@${player.id}> удален из очереди пользователем <@${interaction.user.id}>. Причина: ${reason}`);
     await interaction.reply(privateReply(`<@${player.id}> удален из очереди проверки #${row.id}.`));
+}
+async function notifyCheatHunters(interaction, checkId) {
+    if (!interaction.guild) {
+        return;
+    }
+    const cheatHunterRoleId = getSetting(interaction.guild.id, 'cheat_hunter_role_id');
+    if (!cheatHunterRoleId) {
+        await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: роль CheatHunter не настроена, DM-уведомления не отправлены.`);
+        return;
+    }
+    const members = await interaction.guild.members.fetch();
+    let sent = 0;
+    let failed = 0;
+    for (const member of members.values()) {
+        if (member.user.bot || !member.roles.cache.has(cheatHunterRoleId)) {
+            continue;
+        }
+        const ok = await safeDm(member, `Поступила новая заявка на проверку читов #${checkId} от <@${interaction.user.id}>. Проверь канал очереди и нажми "Вызвать", когда будешь готов.`);
+        if (ok) {
+            sent += 1;
+        }
+        else {
+            failed += 1;
+        }
+    }
+    await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `DM CheatHunter по заявке #${checkId}: отправлено ${sent}, не доставлено ${failed}.`);
 }
