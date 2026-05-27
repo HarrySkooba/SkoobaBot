@@ -56,6 +56,19 @@ export async function handleProfileCommand(interaction: ChatInputCommandInteract
     return true;
   }
 
+  if (interaction.commandName === 'profile-delete') {
+    const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    if (!member || !hasAdminRole(member)) {
+      await interaction.reply(privateReply('Удалять профили могут только участники с admin_role_id.'));
+      return true;
+    }
+
+    const player = interaction.options.getUser('player', true);
+    const reason = interaction.options.getString('reason');
+    await deletePlayerProfile(interaction, player.id, reason ?? 'Принудительное удаление админом');
+    return true;
+  }
+
   return false;
 }
 
@@ -192,6 +205,65 @@ async function createProfileChannel(interaction: ButtonInteraction) {
   );
   audit(interaction.guild.id, 'profile.created', { profileId: Number(result.lastInsertRowid), channelId: channel.id }, interaction.user.id, interaction.user.id);
   return channel;
+}
+
+async function deletePlayerProfile(interaction: ChatInputCommandInteraction, userId: string, reason: string) {
+  if (!interaction.guild) {
+    await interaction.reply(privateReply('Профили работают только на сервере.'));
+    return;
+  }
+
+  const profile = db.prepare('SELECT id, channel_id, tier FROM player_profiles WHERE guild_id = ? AND user_id = ?').get(interaction.guild.id, userId) as
+    | { id: number; channel_id: string; tier: number }
+    | undefined;
+  if (!profile) {
+    await interaction.reply(privateReply('Профиль игрока не найден в базе.'));
+    return;
+  }
+
+  const channel = await interaction.guild.channels.fetch(profile.channel_id).catch(() => null);
+  let channelDeleted = false;
+  if (channel?.type === ChannelType.GuildText) {
+    await channel.delete(`profile-delete: ${reason}`).then(() => {
+      channelDeleted = true;
+    }).catch(() => undefined);
+  }
+
+  const member = await interaction.guild.members.fetch(userId).catch(() => null);
+  const rolesRemoved: string[] = [];
+  if (member) {
+    for (const tier of [1, 2, 3] as const) {
+      const roleId = getTierRoleId(interaction.guild.id, tier);
+      if (!roleId || !member.roles.cache.has(roleId)) {
+        continue;
+      }
+      await member.roles.remove(roleId).catch(() => undefined);
+      if (!member.roles.cache.has(roleId)) {
+        rolesRemoved.push(roleId);
+      }
+    }
+  }
+
+  db.prepare('DELETE FROM player_profiles WHERE id = ?').run(profile.id);
+  audit(
+    interaction.guild.id,
+    'profile.deleted',
+    { profileId: profile.id, channelId: profile.channel_id, tier: profile.tier, channelDeleted, rolesRemoved, reason },
+    interaction.user.id,
+    userId,
+  );
+  await sendToConfiguredChannel(
+    interaction.guild,
+    'profile_log_channel_id',
+    `Профиль <@${userId}> удален админом <@${interaction.user.id}>. Тир был ${profile.tier}. Канал: ${channelDeleted ? 'удален' : 'не найден или не удален'}. Причина: ${reason}`,
+  );
+
+  const details = [
+    channelDeleted ? 'канал удален' : 'канал не удален (уже удален или нет прав бота)',
+    rolesRemoved.length ? 'роли тира сняты' : 'роли тира не снимались',
+    'запись в БД удалена',
+  ].join(', ');
+  await interaction.reply(privateReply(`Профиль <@${userId}> сброшен: ${details}. Игрок снова может создать профиль через панель.`));
 }
 
 async function promoteProfile(interaction: ChatInputCommandInteraction | ButtonInteraction, userId: string, newTier: number, reason: string) {

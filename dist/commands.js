@@ -61,6 +61,12 @@ export const commands = [
         .addChoices({ name: 'Тир 1', value: 1 }, { name: 'Тир 2', value: 2 }, { name: 'Тир 3', value: 3 }))
         .addStringOption((option) => option.setName('reason').setDescription('Причина повышения.')),
     new SlashCommandBuilder()
+        .setName('profile-delete')
+        .setDescription('Принудительно удалить профиль игрока (канал, роли тира, запись в БД).')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addUserOption((option) => option.setName('player').setDescription('Игрок.').setRequired(true))
+        .addStringOption((option) => option.setName('reason').setDescription('Причина удаления.')),
+    new SlashCommandBuilder()
         .setName('event-create')
         .setDescription('Создать мероприятие Капт или МЦЛ.')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
