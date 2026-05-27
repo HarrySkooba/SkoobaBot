@@ -36,6 +36,10 @@ export const commands = [
         .setDescription('Опубликовать сообщение с кнопкой подачи заявки.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
     new SlashCommandBuilder()
+        .setName('role-panel')
+        .setDescription('Опубликовать панель самовыдачи ролей семьи и Unverified.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    new SlashCommandBuilder()
         .setName('cheat-panel')
         .setDescription('Опубликовать сообщение с кнопкой заявки на проверку читов.')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

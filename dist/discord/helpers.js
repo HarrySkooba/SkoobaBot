@@ -74,3 +74,16 @@ export async function replyOrUpdate(interaction, content) {
 export function canSendMessages(channel) {
     return 'send' in channel;
 }
+export function uniqueRoleIds(roleIds) {
+    return [...new Set(roleIds.filter((roleId) => Boolean(roleId)))];
+}
+export async function grantRolesToMember(member, roleIds) {
+    const granted = [];
+    for (const roleId of uniqueRoleIds(roleIds)) {
+        if (member.roles.cache.has(roleId)) {
+            continue;
+        }
+        await member.roles.add(roleId).then(() => granted.push(roleId)).catch(() => undefined);
+    }
+    return granted;
+}

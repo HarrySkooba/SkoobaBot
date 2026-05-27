@@ -5,6 +5,7 @@ import { handleApplicationButton, handleApplicationCommand, handleApplicationMod
 import { handleCheatButton, handleCheatCommand } from './features/cheatChecks.js';
 import { handleEventButton, handleEventCommand, startReminderScheduler } from './features/events.js';
 import { handleProfileButton, handleProfileCommand } from './features/playerProfiles.js';
+import { handleRoleRecoveryButton, handleRoleRecoveryCommand } from './features/roleRecovery.js';
 import { handleSettingsButton, handleSettingsCommand } from './features/settings.js';
 import { registerGuildCommands } from './registerCommands.js';
 
@@ -34,6 +35,7 @@ client.on('interactionCreate', async (interaction) => {
       if (await handleApplicationCommand(interaction)) return;
       if (await handleCheatCommand(interaction)) return;
       if (await handleProfileCommand(interaction)) return;
+      if (await handleRoleRecoveryCommand(interaction)) return;
       if (await handleEventCommand(interaction)) return;
       await interaction.reply({ content: 'Команда пока не обработана.', flags: MessageFlags.Ephemeral });
       return;
@@ -44,6 +46,7 @@ client.on('interactionCreate', async (interaction) => {
       if (await handleApplicationButton(interaction)) return;
       if (await handleCheatButton(interaction)) return;
       if (await handleProfileButton(interaction)) return;
+      if (await handleRoleRecoveryButton(interaction)) return;
       if (await handleEventButton(interaction)) return;
       await interaction.reply({ content: 'Кнопка пока не обработана.', flags: MessageFlags.Ephemeral });
       return;

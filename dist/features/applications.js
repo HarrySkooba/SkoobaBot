@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, } from 'discord.js';
 import { db } from '../database/db.js';
-import { getRoleRule, getSetting } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, isStaff, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
+import { grantApplicationAcceptRoles } from './roleRecovery.js';
 export async function handleApplicationCommand(interaction) {
     if (interaction.commandName !== 'application-panel') {
         return false;
@@ -127,9 +127,8 @@ async function resolveApplication(interaction, applicationId, action) {
     db.prepare('UPDATE applications SET status = ?, reviewer_id = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'accept' ? 'accepted' : 'rejected', interaction.user.id, applicationId);
     if (action === 'accept') {
         const member = await interaction.guild.members.fetch(row.user_id).catch(() => null);
-        const grantRoleId = getRoleRule(interaction.guild.id, 'application_accept').grantRoleId ?? getSetting(interaction.guild.id, 'family_role_id');
-        if (member && grantRoleId) {
-            await member.roles.add(grantRoleId).catch(() => undefined);
+        if (member) {
+            await grantApplicationAcceptRoles(member);
         }
     }
     audit(interaction.guild.id, `application.${action}`, { applicationId }, interaction.user.id, row.user_id);

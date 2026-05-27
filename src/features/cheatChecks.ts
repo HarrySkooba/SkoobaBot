@@ -9,7 +9,7 @@ import {
 } from 'discord.js';
 import { db } from '../database/db.js';
 import { getRoleRule, getSetting } from '../database/settings.js';
-import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm } from '../discord/helpers.js';
+import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm, uniqueRoleIds } from '../discord/helpers.js';
 
 export async function handleCheatCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.commandName !== 'cheat-panel' && interaction.commandName !== 'cheat-remove') {
@@ -301,10 +301,6 @@ async function notifyCheatHunters(interaction: ButtonInteraction, checkId: numbe
 
     await safeDm(member, `Поступила новая заявка на проверку читов #${checkId} от <@${interaction.user.id}>. Проверь канал очереди и нажми "Вызвать", когда будешь готов.`);
   }
-}
-
-function uniqueRoleIds(roleIds: Array<string | null>): string[] {
-  return [...new Set(roleIds.filter((roleId): roleId is string => Boolean(roleId)))];
 }
 
 function cheatCheckStatusLabel(status: string): string {

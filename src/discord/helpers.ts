@@ -111,3 +111,18 @@ export async function replyOrUpdate(interaction: { replied: boolean; deferred: b
 export function canSendMessages(channel: TextBasedChannel): boolean {
   return 'send' in channel;
 }
+
+export function uniqueRoleIds(roleIds: Array<string | null>): string[] {
+  return [...new Set(roleIds.filter((roleId): roleId is string => Boolean(roleId)))];
+}
+
+export async function grantRolesToMember(member: GuildMember, roleIds: Array<string | null>): Promise<string[]> {
+  const granted: string[] = [];
+  for (const roleId of uniqueRoleIds(roleIds)) {
+    if (member.roles.cache.has(roleId)) {
+      continue;
+    }
+    await member.roles.add(roleId).then(() => granted.push(roleId)).catch(() => undefined);
+  }
+  return granted;
+}

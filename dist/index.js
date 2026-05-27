@@ -5,6 +5,7 @@ import { handleApplicationButton, handleApplicationCommand, handleApplicationMod
 import { handleCheatButton, handleCheatCommand } from './features/cheatChecks.js';
 import { handleEventButton, handleEventCommand, startReminderScheduler } from './features/events.js';
 import { handleProfileButton, handleProfileCommand } from './features/playerProfiles.js';
+import { handleRoleRecoveryButton, handleRoleRecoveryCommand } from './features/roleRecovery.js';
 import { handleSettingsButton, handleSettingsCommand } from './features/settings.js';
 import { registerGuildCommands } from './registerCommands.js';
 const client = new Client({
@@ -35,6 +36,8 @@ client.on('interactionCreate', async (interaction) => {
                 return;
             if (await handleProfileCommand(interaction))
                 return;
+            if (await handleRoleRecoveryCommand(interaction))
+                return;
             if (await handleEventCommand(interaction))
                 return;
             await interaction.reply({ content: 'Команда пока не обработана.', flags: MessageFlags.Ephemeral });
@@ -48,6 +51,8 @@ client.on('interactionCreate', async (interaction) => {
             if (await handleCheatButton(interaction))
                 return;
             if (await handleProfileButton(interaction))
+                return;
+            if (await handleRoleRecoveryButton(interaction))
                 return;
             if (await handleEventButton(interaction))
                 return;
