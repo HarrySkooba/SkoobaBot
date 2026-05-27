@@ -36,7 +36,7 @@ export async function handleProfileCommand(interaction) {
         const player = interaction.options.getUser('player', true);
         const tier = interaction.options.getInteger('tier', true);
         const reason = interaction.options.getString('reason');
-        await promoteProfile(interaction, player.id, tier, reason ?? 'Без причины');
+        await changeProfileTier(interaction, player.id, tier, reason ?? 'Без причины');
         return true;
     }
     if (interaction.commandName === 'profile-delete') {
@@ -84,21 +84,57 @@ export async function handleProfileButton(interaction) {
         return true;
     }
     const [, action, userId] = interaction.customId.split(':');
-    if (action === 'promote') {
+    if (action === 'promote' || action === 'demote') {
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
         if (!member || !canPromote(member)) {
-            await interaction.reply(privateReply('Повышать тир могут только наставники и админы.'));
+            await interaction.reply(privateReply('Менять тир могут только наставники и админы.'));
             return true;
         }
         const current = db.prepare('SELECT tier FROM player_profiles WHERE guild_id = ? AND user_id = ?').get(interaction.guild.id, userId);
-        const nextTier = current ? Math.max(1, current.tier - 1) : 3;
-        await promoteProfile(interaction, userId, nextTier, 'Повышение через кнопку профиля');
+        if (!current) {
+            await interaction.reply(privateReply('Профиль игрока не найден.'));
+            return true;
+        }
+        if (action === 'promote') {
+            if (current.tier <= 1) {
+                await interaction.reply(privateReply('Игрок уже на тире 1 (максимальный).'));
+                return true;
+            }
+            await changeProfileTier(interaction, userId, current.tier - 1, 'Повышение через кнопку профиля');
+            return true;
+        }
+        if (current.tier >= 3) {
+            await interaction.reply(privateReply('Игрок уже на тире 3 (минимальный).'));
+            return true;
+        }
+        await changeProfileTier(interaction, userId, current.tier + 1, 'Понижение через кнопку профиля');
         return true;
     }
     return true;
 }
 function canPromote(member) {
     return isAdmin(member) || hasConfiguredRole(member, 'mentor_role_id');
+}
+function buildProfileControlButtons(ownerUserId) {
+    return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`profile:promote:${ownerUserId}`).setLabel('Повысить тир').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`profile:demote:${ownerUserId}`).setLabel('Понизить тир').setStyle(ButtonStyle.Secondary));
+}
+async function syncMemberTierRoles(guild, userId, tier) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) {
+        return;
+    }
+    for (const tierNumber of [1, 2, 3]) {
+        const roleId = getTierRoleId(guild.id, tierNumber);
+        if (!roleId) {
+            continue;
+        }
+        if (tierNumber === tier) {
+            await member.roles.add(roleId).catch(() => undefined);
+        }
+        else {
+            await member.roles.remove(roleId).catch(() => undefined);
+        }
+    }
 }
 function buildProfileChannelOverwrites(guild, ownerUserId) {
     const viewAndHistory = [
@@ -153,12 +189,11 @@ async function createProfileChannel(interaction) {
                 .setDescription('Здесь игрок общается с наставниками и отправляет достижения в ветки отчетов.')
                 .setColor(0x57f287),
         ],
-        components: [
-            new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`profile:promote:${interaction.user.id}`).setLabel('Повысить тир').setStyle(ButtonStyle.Success)),
-        ],
+        components: [buildProfileControlButtons(interaction.user.id)],
     });
     const result = db.prepare('INSERT INTO player_profiles (guild_id, user_id, channel_id, tier) VALUES (?, ?, ?, ?)').run(interaction.guild.id, interaction.user.id, channel.id, tier);
-    audit(interaction.guild.id, 'profile.created', { profileId: Number(result.lastInsertRowid), channelId: channel.id }, interaction.user.id, interaction.user.id);
+    await syncMemberTierRoles(interaction.guild, interaction.user.id, tier);
+    audit(interaction.guild.id, 'profile.created', { profileId: Number(result.lastInsertRowid), channelId: channel.id, tier }, interaction.user.id, interaction.user.id);
     return channel;
 }
 async function deletePlayerProfile(interaction, userId, reason) {
@@ -202,13 +237,21 @@ async function deletePlayerProfile(interaction, userId, reason) {
     ].join(', ');
     await interaction.reply(privateReply(`Профиль <@${userId}> сброшен: ${details}. Игрок снова может создать профиль через панель.`));
 }
-async function promoteProfile(interaction, userId, newTier, reason) {
+async function changeProfileTier(interaction, userId, newTier, reason) {
     if (!interaction.guild) {
+        return;
+    }
+    if (newTier < 1 || newTier > 3) {
+        await interaction.reply(privateReply('Тир должен быть от 1 до 3.'));
         return;
     }
     const profile = db.prepare('SELECT id, channel_id, tier FROM player_profiles WHERE guild_id = ? AND user_id = ?').get(interaction.guild.id, userId);
     if (!profile) {
         await interaction.reply(privateReply('Профиль игрока не найден.'));
+        return;
+    }
+    if (profile.tier === newTier) {
+        await interaction.reply(privateReply(`У игрока уже тир ${newTier}.`));
         return;
     }
     const oldTier = profile.tier;
@@ -217,21 +260,7 @@ async function promoteProfile(interaction, userId, newTier, reason) {
     if (channel?.type === ChannelType.GuildText && categoryId) {
         await channel.setParent(categoryId).catch(() => undefined);
     }
-    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    if (member) {
-        for (const tier of [1, 2, 3]) {
-            const roleId = getTierRoleId(interaction.guild.id, tier);
-            if (!roleId) {
-                continue;
-            }
-            if (tier === newTier) {
-                await member.roles.add(roleId).catch(() => undefined);
-            }
-            else {
-                await member.roles.remove(roleId).catch(() => undefined);
-            }
-        }
-    }
+    await syncMemberTierRoles(interaction.guild, userId, newTier);
     db.prepare('UPDATE player_profiles SET tier = ?, updated_at = unixepoch() WHERE id = ?').run(newTier, profile.id);
     db.prepare('INSERT INTO profile_tier_changes (profile_id, mentor_id, old_tier, new_tier, reason) VALUES (?, ?, ?, ?, ?)').run(profile.id, interaction.user.id, oldTier, newTier, reason);
     audit(interaction.guild.id, 'profile.tier_changed', { profileId: profile.id, oldTier, newTier, reason }, interaction.user.id, userId);
