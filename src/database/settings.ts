@@ -61,6 +61,19 @@ export function listSettings(guildId: string): Record<string, string> {
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
 }
 
+export function deleteSetting(guildId: string, key: string): { deleted: boolean; previousValue: string | null } {
+  const row = db
+    .prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?')
+    .get(guildId, key) as { value: string } | undefined;
+
+  if (!row) {
+    return { deleted: false, previousValue: null };
+  }
+
+  db.prepare('DELETE FROM guild_settings WHERE guild_id = ? AND key = ?').run(guildId, key);
+  return { deleted: true, previousValue: row.value };
+}
+
 export function setRoleRule(
   guildId: string,
   scenario: string,

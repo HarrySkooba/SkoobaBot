@@ -11,7 +11,7 @@ import {
   PermissionsBitField,
 } from 'discord.js';
 import { audit, isAdmin, privateReply, quoteId, requireAdmin } from '../discord/helpers.js';
-import { getSetting, isSettingKey, listSettings, setRoleRule, setSetting } from '../database/settings.js';
+import { deleteSetting, getSetting, isSettingKey, listSettings, setRoleRule, setSetting } from '../database/settings.js';
 
 export async function handleSettingsCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.commandName === 'admin-panel') {
@@ -47,11 +47,34 @@ export async function handleSettingsCommand(interaction: ChatInputCommandInterac
       return true;
     }
 
-    const settings = listSettings(interaction.guild.id);
-    const body = Object.entries(settings)
-      .map(([key, value]) => `\`${key}\`: \`${value}\``)
-      .join('\n') || 'Настройки пока не заданы.';
-    await interaction.reply(privateReply(body.slice(0, 1900)));
+    if (subcommand === 'delete') {
+      const key = interaction.options.getString('key', true).trim();
+      if (!/^[a-z0-9_]+$/.test(key)) {
+        await interaction.reply(privateReply('Некорректный ключ. Используй только латиницу, цифры и подчеркивание.'));
+        return true;
+      }
+
+      const result = deleteSetting(interaction.guild.id, key);
+      if (!result.deleted) {
+        await interaction.reply(privateReply(`Настройка \`${key}\` не найдена.`));
+        return true;
+      }
+
+      audit(interaction.guild.id, 'setting.deleted', { key, previousValue: result.previousValue }, interaction.user.id);
+      await interaction.reply(privateReply(`Настройка \`${key}\` удалена.`));
+      return true;
+    }
+
+    if (subcommand === 'list') {
+      const settings = listSettings(interaction.guild.id);
+      const body = Object.entries(settings)
+        .map(([key, value]) => `\`${key}\`: \`${value}\``)
+        .join('\n') || 'Настройки пока не заданы.';
+      await interaction.reply(privateReply(body.slice(0, 1900)));
+      return true;
+    }
+
+    await interaction.reply(privateReply('Неизвестная подкоманда.'));
     return true;
   }
 

@@ -46,6 +46,16 @@ export function listSettings(guildId) {
         .all(guildId);
     return Object.fromEntries(rows.map((row) => [row.key, row.value]));
 }
+export function deleteSetting(guildId, key) {
+    const row = db
+        .prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?')
+        .get(guildId, key);
+    if (!row) {
+        return { deleted: false, previousValue: null };
+    }
+    db.prepare('DELETE FROM guild_settings WHERE guild_id = ? AND key = ?').run(guildId, key);
+    return { deleted: true, previousValue: row.value };
+}
 export function setRoleRule(guildId, scenario, checkRoleId, grantRoleId, updatedBy) {
     db.prepare(`INSERT INTO role_rules (guild_id, scenario, check_role_id, grant_role_id, updated_by, updated_at)
      VALUES (?, ?, ?, ?, ?, unixepoch())

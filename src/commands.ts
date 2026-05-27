@@ -21,7 +21,15 @@ export const commands = [
         )
         .addStringOption((option) => option.setName('value').setDescription('ID роли, канала или категории.').setRequired(true)),
     )
-    .addSubcommand((subcommand) => subcommand.setName('list').setDescription('Показать текущие настройки.')),
+    .addSubcommand((subcommand) => subcommand.setName('list').setDescription('Показать текущие настройки.'))
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName('delete')
+        .setDescription('Удалить настройку по ключу, в том числе устаревшую.')
+        .addStringOption((option) =>
+          option.setName('key').setDescription('Ключ настройки, например kapt_tier_1_role_id.').setRequired(true),
+        ),
+    ),
   new SlashCommandBuilder()
     .setName('role-rule')
     .setDescription('Настроить правило проверки и выдачи ролей.')
