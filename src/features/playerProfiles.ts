@@ -9,7 +9,7 @@ import {
   PermissionsBitField,
 } from 'discord.js';
 import { db } from '../database/db.js';
-import { getSetting, getTierRoleId } from '../database/settings.js';
+import { getSetting, getTierCategoryId, getTierRoleId } from '../database/settings.js';
 import { audit, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
 
 export async function handleProfileCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
@@ -29,7 +29,7 @@ export async function handleProfileCommand(interaction: ChatInputCommandInteract
       embeds: [
         new EmbedBuilder()
           .setTitle('Личный профиль игрока')
-          .setDescription('Нажми кнопку, чтобы создать личный канал профиля. Стартовый тир: 3.')
+          .setDescription('Нажми кнопку, чтобы создать личный канал профиля в категории Тир 3.')
           .setColor(0x57f287),
       ],
       components: [
@@ -114,11 +114,13 @@ async function createProfileChannel(interaction: ButtonInteraction) {
   }
 
   const tier = 3;
+  const categoryId = getTierCategoryId(interaction.guild.id, tier);
   const mentorRoleId = getSetting(interaction.guild.id, 'mentor_role_id');
   const adminRoleId = getSetting(interaction.guild.id, 'admin_role_id');
   const channel = await interaction.guild.channels.create({
     name: `profile-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90),
     type: ChannelType.GuildText,
+    parent: categoryId ?? undefined,
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: interaction.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
@@ -170,6 +172,12 @@ async function promoteProfile(interaction: ChatInputCommandInteraction | ButtonI
   }
 
   const oldTier = profile.tier;
+  const channel = await interaction.guild.channels.fetch(profile.channel_id).catch(() => null);
+  const categoryId = getTierCategoryId(interaction.guild.id, newTier as 1 | 2 | 3);
+  if (channel?.type === ChannelType.GuildText && categoryId) {
+    await channel.setParent(categoryId).catch(() => undefined);
+  }
+
   const member = await interaction.guild.members.fetch(userId).catch(() => null);
   if (member) {
     for (const tier of [1, 2, 3] as const) {

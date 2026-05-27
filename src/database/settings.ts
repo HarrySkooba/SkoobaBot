@@ -23,6 +23,9 @@ export const settingKeys = [
   'tier_1_role_id',
   'tier_2_role_id',
   'tier_3_role_id',
+  'tier_1_category_id',
+  'tier_2_category_id',
+  'tier_3_category_id',
 ] as const;
 
 export type TierNumber = 1 | 2 | 3;
@@ -94,6 +97,10 @@ export function setRoleRule(
 
 export function getTierRoleId(guildId: string, tier: TierNumber): string | null {
   return getSetting(guildId, `tier_${tier}_role_id`);
+}
+
+export function getTierCategoryId(guildId: string, tier: TierNumber): string | null {
+  return getSetting(guildId, `tier_${tier}_category_id`);
 }
 
 export function getEventPublishChannelKey(type: EventType): SettingKey {

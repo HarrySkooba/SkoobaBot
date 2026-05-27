@@ -22,6 +22,9 @@ export const settingKeys = [
     'tier_1_role_id',
     'tier_2_role_id',
     'tier_3_role_id',
+    'tier_1_category_id',
+    'tier_2_category_id',
+    'tier_3_category_id',
 ];
 export function isSettingKey(value) {
     return settingKeys.includes(value);
@@ -67,6 +70,9 @@ export function setRoleRule(guildId, scenario, checkRoleId, grantRoleId, updated
 }
 export function getTierRoleId(guildId, tier) {
     return getSetting(guildId, `tier_${tier}_role_id`);
+}
+export function getTierCategoryId(guildId, tier) {
+    return getSetting(guildId, `tier_${tier}_category_id`);
 }
 export function getEventPublishChannelKey(type) {
     return type === 'kapt' ? 'event_capt_channel_id' : 'event_mcl_channel_id';

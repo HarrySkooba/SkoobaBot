@@ -70,6 +70,7 @@ DATABASE_PATH=./data/skooba.sqlite
 - `cheat_queue_channel_id`, `cheat_log_channel_id`
 - `profile_log_channel_id`
 - `tier_1_role_id`, `tier_2_role_id`, `tier_3_role_id` — общие роли тира для Капт, МЦЛ и профилей
+- `tier_1_category_id`, `tier_2_category_id`, `tier_3_category_id` — категории Discord для личных профилей по тиру
 
 ID можно передавать как чистый ID или вставлять mention роли/канала.
 
