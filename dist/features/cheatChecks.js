@@ -3,12 +3,16 @@ import { db } from '../database/db.js';
 import { getRoleRule, getSetting } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm } from '../discord/helpers.js';
 export async function handleCheatCommand(interaction) {
-    if (interaction.commandName !== 'cheat-panel') {
+    if (interaction.commandName !== 'cheat-panel' && interaction.commandName !== 'cheat-remove') {
         return false;
     }
     const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-    if (!member || !isAdmin(member)) {
-        await interaction.reply(privateReply('Панель проверок может публиковать только админ.'));
+    if (!member || (interaction.commandName === 'cheat-panel' ? !isAdmin(member) : !canHandleCheat(member))) {
+        await interaction.reply(privateReply(interaction.commandName === 'cheat-panel' ? 'Панель проверок может публиковать только админ.' : 'Убирать игроков из очереди могут только CheatHunter и админы.'));
+        return true;
+    }
+    if (interaction.commandName === 'cheat-remove') {
+        await removePlayerFromQueue(interaction);
         return true;
     }
     const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('cheat:request').setLabel('Подать заявку на проверку').setStyle(ButtonStyle.Primary));
@@ -145,4 +149,34 @@ async function resolveCheck(interaction, checkId, action) {
     audit(interaction.guild.id, `cheat_check.${status}`, { checkId }, interaction.user.id, row.user_id);
     await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: результат \`${status}\`, игрок <@${row.user_id}>, CheatHunter <@${interaction.user.id}>.`);
     await interaction.update({ content: `Проверка #${checkId} завершена: ${status}.`, embeds: [], components: [] });
+}
+async function removePlayerFromQueue(interaction) {
+    if (!interaction.guild) {
+        await interaction.reply(privateReply('Проверки работают только на сервере.'));
+        return;
+    }
+    const player = interaction.options.getUser('player', true);
+    const reason = interaction.options.getString('reason') ?? 'Удалено командой стаффа';
+    const row = db
+        .prepare("SELECT id, queue_message_id FROM cheat_checks WHERE guild_id = ? AND user_id = ? AND status IN ('waiting', 'called') ORDER BY created_at DESC LIMIT 1")
+        .get(interaction.guild.id, player.id);
+    if (!row) {
+        await interaction.reply(privateReply(`<@${player.id}> не найден в активной очереди проверки.`));
+        return;
+    }
+    db.prepare('UPDATE cheat_checks SET status = ?, hunter_id = ?, resolved_at = unixepoch(), result = ?, updated_at = unixepoch() WHERE id = ?').run('removed', interaction.user.id, reason, row.id);
+    const queueChannel = await getConfiguredTextChannel(interaction.guild, 'cheat_queue_channel_id');
+    if (queueChannel && row.queue_message_id) {
+        const message = await queueChannel.messages.fetch(row.queue_message_id).catch(() => null);
+        await message
+            ?.edit({
+            content: `Проверка #${row.id} удалена из очереди командой <@${interaction.user.id}>. Причина: ${reason}`,
+            embeds: [],
+            components: [],
+        })
+            .catch(() => undefined);
+    }
+    audit(interaction.guild.id, 'cheat_check.removed', { checkId: row.id, reason }, interaction.user.id, player.id);
+    await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${row.id}: игрок <@${player.id}> удален из очереди пользователем <@${interaction.user.id}>. Причина: ${reason}`);
+    await interaction.reply(privateReply(`<@${player.id}> удален из очереди проверки #${row.id}.`));
 }

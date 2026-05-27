@@ -43,6 +43,11 @@ export const commands = [
     .setDescription('Опубликовать сообщение с кнопкой заявки на проверку читов.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
+    .setName('cheat-remove')
+    .setDescription('Убрать игрока из активной очереди проверки на читы.')
+    .addUserOption((option) => option.setName('player').setDescription('Игрок, которого нужно убрать из очереди.').setRequired(true))
+    .addStringOption((option) => option.setName('reason').setDescription('Причина удаления из очереди.')),
+  new SlashCommandBuilder()
     .setName('profile-panel')
     .setDescription('Опубликовать сообщение с кнопкой создания личного профиля.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
