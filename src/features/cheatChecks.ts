@@ -184,6 +184,7 @@ async function resolveCheck(interaction: ButtonInteraction, checkId: number, act
   }
 
   const status = action === 'clean' ? 'clean' : action;
+  const statusLabel = cheatCheckStatusLabel(status);
   db.prepare('UPDATE cheat_checks SET status = ?, hunter_id = ?, resolved_at = unixepoch(), result = ?, updated_at = unixepoch() WHERE id = ?').run(
     status,
     interaction.user.id,
@@ -197,7 +198,6 @@ async function resolveCheck(interaction: ButtonInteraction, checkId: number, act
     const grantRoleId = cheatCleanRule.grantRoleId ?? getSetting(interaction.guild.id, 'verified_role_id');
     const removeRoleIds = uniqueRoleIds([cheatCleanRule.checkRoleId, getSetting(interaction.guild.id, 'unverified_role_id')]);
     if (player) {
-      const removedRoleIds: string[] = [];
       const failedRemoveRoleIds: string[] = [];
 
       for (const removeRoleId of removeRoleIds) {
@@ -214,7 +214,7 @@ async function resolveCheck(interaction: ButtonInteraction, checkId: number, act
         );
 
         if (removed) {
-          removedRoleIds.push(removeRoleId);
+          continue;
         } else {
           failedRemoveRoleIds.push(removeRoleId);
         }
@@ -232,21 +232,13 @@ async function resolveCheck(interaction: ButtonInteraction, checkId: number, act
         );
       }
 
-      if (removedRoleIds.length > 0) {
-        await sendToConfiguredChannel(
-          interaction.guild,
-          'cheat_log_channel_id',
-          `Проверка #${checkId}: сняты роли ${removedRoleIds.map((roleId) => `<@&${roleId}>`).join(', ')} с <@${player.id}>.`,
-        );
-      }
-
       await safeDm(player, 'Проверка завершена: ты чист. Роль Verified выдана.');
     }
   }
 
   audit(interaction.guild.id, `cheat_check.${status}`, { checkId }, interaction.user.id, row.user_id);
-  await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: результат \`${status}\`, игрок <@${row.user_id}>, CheatHunter <@${interaction.user.id}>.`);
-  await interaction.update({ content: `Проверка #${checkId} завершена: ${status}.`, embeds: [], components: [] });
+  await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: результат ${statusLabel}, игрок <@${row.user_id}>, CheatHunter <@${interaction.user.id}>.`);
+  await interaction.update({ content: `Проверка #${checkId} завершена: ${statusLabel}.`, embeds: [], components: [] });
 }
 
 async function removePlayerFromQueue(interaction: ChatInputCommandInteraction) {
@@ -297,30 +289,35 @@ async function notifyCheatHunters(interaction: ButtonInteraction, checkId: numbe
 
   const cheatHunterRoleId = getSetting(interaction.guild.id, 'cheat_hunter_role_id');
   if (!cheatHunterRoleId) {
-    await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `Проверка #${checkId}: роль CheatHunter не настроена, DM-уведомления не отправлены.`);
     return;
   }
 
   const members = await interaction.guild.members.fetch();
-  let sent = 0;
-  let failed = 0;
 
   for (const member of members.values()) {
     if (member.user.bot || !member.roles.cache.has(cheatHunterRoleId)) {
       continue;
     }
 
-    const ok = await safeDm(member, `Поступила новая заявка на проверку читов #${checkId} от <@${interaction.user.id}>. Проверь канал очереди и нажми "Вызвать", когда будешь готов.`);
-    if (ok) {
-      sent += 1;
-    } else {
-      failed += 1;
-    }
+    await safeDm(member, `Поступила новая заявка на проверку читов #${checkId} от <@${interaction.user.id}>. Проверь канал очереди и нажми "Вызвать", когда будешь готов.`);
   }
-
-  await sendToConfiguredChannel(interaction.guild, 'cheat_log_channel_id', `DM CheatHunter по заявке #${checkId}: отправлено ${sent}, не доставлено ${failed}.`);
 }
 
 function uniqueRoleIds(roleIds: Array<string | null>): string[] {
   return [...new Set(roleIds.filter((roleId): roleId is string => Boolean(roleId)))];
+}
+
+function cheatCheckStatusLabel(status: string): string {
+  switch (status) {
+    case 'clean':
+      return 'игрок чист';
+    case 'reject':
+      return 'отклонено';
+    case 'noshow':
+      return 'не явился';
+    case 'removed':
+      return 'удалено из очереди';
+    default:
+      return status;
+  }
 }
