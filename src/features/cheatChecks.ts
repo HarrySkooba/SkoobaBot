@@ -39,7 +39,7 @@ export async function handleCheatCommand(interaction: ChatInputCommandInteractio
     embeds: [
       new EmbedBuilder()
         .setTitle('Проверка на читы')
-        .setDescription('Если ты состоишь в семье и еще не получил Verified, подай заявку на проверку.')
+        .setDescription('Нужны роли семьи и Unverified. Если их нет — возьми на панели `/role-panel`. После проверки выдается Verified.')
         .setColor(0xe67e22),
     ],
     components: [row],
@@ -67,6 +67,11 @@ export async function handleCheatButton(interaction: ButtonInteraction): Promise
   if (interaction.customId === 'cheat:request') {
     if (!hasConfiguredRole(member, 'family_role_id')) {
       await interaction.reply(privateReply('Заявку на проверку могут подавать только участники с ролью семьи.'));
+      return true;
+    }
+
+    if (!hasConfiguredRole(member, 'unverified_role_id')) {
+      await interaction.reply(privateReply('Заявку на проверку могут подавать только участники с ролью Unverified.'));
       return true;
     }
 
