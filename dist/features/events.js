@@ -1,12 +1,12 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, } from 'discord.js';
 import { db } from '../database/db.js';
 import { getSetting } from '../database/settings.js';
-import { audit, getConfiguredTextChannel, hasConfiguredRole, isStaff, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
+import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 export async function handleEventCommand(interaction) {
     if (interaction.commandName === 'event-create') {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-        if (!member || !isStaff(member)) {
-            await interaction.reply(privateReply('Создавать мероприятия может только стафф.'));
+        if (!member || !hasAdminRole(member)) {
+            await interaction.reply(privateReply('Создавать мероприятия могут только участники с admin_role_id.'));
             return true;
         }
         if (!interaction.guild) {
@@ -37,6 +37,11 @@ export async function handleEventCommand(interaction) {
         return true;
     }
     if (interaction.commandName === 'attendance') {
+        const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+        if (!member || !hasAdminRole(member)) {
+            await interaction.reply(privateReply('Смотреть посещаемость могут только участники с admin_role_id.'));
+            return true;
+        }
         const player = interaction.options.getUser('player', true);
         const rows = db
             .prepare(`SELECT COUNT(*) AS total,
@@ -85,8 +90,8 @@ export async function handleEventButton(interaction) {
         return true;
     }
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-    if (!member || !isStaff(member)) {
-        await interaction.reply(privateReply('Управлять событием может только стафф.'));
+    if (!member || !hasAdminRole(member)) {
+        await interaction.reply(privateReply('Управлять событием могут только участники с admin_role_id.'));
         return true;
     }
     if (action === 'notify-main' || action === 'notify-reserve') {

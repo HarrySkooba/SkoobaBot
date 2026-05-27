@@ -8,7 +8,7 @@ import {
 } from 'discord.js';
 import { db } from '../database/db.js';
 import { getRoleRule, getSetting } from '../database/settings.js';
-import { audit, getConfiguredTextChannel, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm } from '../discord/helpers.js';
+import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel, safeDm } from '../discord/helpers.js';
 
 export async function handleCheatCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.commandName !== 'cheat-panel' && interaction.commandName !== 'cheat-remove') {
@@ -16,8 +16,8 @@ export async function handleCheatCommand(interaction: ChatInputCommandInteractio
   }
 
   const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-  if (!member || (interaction.commandName === 'cheat-panel' ? !isAdmin(member) : !canHandleCheat(member))) {
-    await interaction.reply(privateReply(interaction.commandName === 'cheat-panel' ? 'Панель проверок может публиковать только админ.' : 'Убирать игроков из очереди могут только CheatHunter и админы.'));
+  if (!member || (interaction.commandName === 'cheat-panel' ? !isAdmin(member) : !hasAdminRole(member))) {
+    await interaction.reply(privateReply(interaction.commandName === 'cheat-panel' ? 'Панель проверок может публиковать только админ.' : 'Убирать игроков из очереди могут только участники с admin_role_id.'));
     return true;
   }
 
@@ -192,8 +192,16 @@ async function resolveCheck(interaction: ButtonInteraction, checkId: number, act
   if (action === 'clean') {
     const player = await interaction.guild.members.fetch(row.user_id).catch(() => null);
     const grantRoleId = getRoleRule(interaction.guild.id, 'cheat_clean').grantRoleId ?? getSetting(interaction.guild.id, 'verified_role_id');
-    if (player && grantRoleId) {
-      await player.roles.add(grantRoleId).catch(() => undefined);
+    const removeRoleId = getRoleRule(interaction.guild.id, 'cheat_clean').checkRoleId ?? getSetting(interaction.guild.id, 'unverified_role_id');
+    if (player) {
+      if (removeRoleId) {
+        await player.roles.remove(removeRoleId).catch(() => undefined);
+      }
+
+      if (grantRoleId) {
+        await player.roles.add(grantRoleId).catch(() => undefined);
+      }
+
       await safeDm(player, 'Проверка завершена: ты чист. Роль Verified выдана.');
     }
   }

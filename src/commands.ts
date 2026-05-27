@@ -45,6 +45,7 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('cheat-remove')
     .setDescription('Убрать игрока из активной очереди проверки на читы.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption((option) => option.setName('player').setDescription('Игрок, которого нужно убрать из очереди.').setRequired(true))
     .addStringOption((option) => option.setName('reason').setDescription('Причина удаления из очереди.')),
   new SlashCommandBuilder()
@@ -54,6 +55,7 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('profile-promote')
     .setDescription('Повысить или изменить тир профиля игрока.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption((option) => option.setName('player').setDescription('Игрок.').setRequired(true))
     .addIntegerOption((option) =>
       option
@@ -66,6 +68,7 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('event-create')
     .setDescription('Создать мероприятие Капт или МЦЛ.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addStringOption((option) =>
       option
         .setName('type')
@@ -92,5 +95,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('attendance')
     .setDescription('Показать историю неявок игрока.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption((option) => option.setName('player').setDescription('Игрок.').setRequired(true)),
 ].map((command) => command.toJSON());

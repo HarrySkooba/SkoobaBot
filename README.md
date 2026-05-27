@@ -63,7 +63,7 @@ DATABASE_PATH=./data/skooba.sqlite
 
 Основные ключи для `/setting set`:
 
-- `admin_role_id`, `staff_role_id`, `family_role_id`, `verified_role_id`
+- `admin_role_id`, `staff_role_id`, `family_role_id`, `verified_role_id`, `unverified_role_id`
 - `mentor_role_id`, `cheat_hunter_role_id`
 - `application_review_channel_id`, `application_log_channel_id`
 - `event_channel_id`, `event_log_channel_id`, `default_voice_channel_id`
@@ -95,9 +95,9 @@ ID можно передавать как чистый ID или вставля�
 Поддерживаемые сценарии:
 
 - `application_accept` — роль, выдаваемая при принятии заявки.
-- `cheat_clean` — роль, выдаваемая после успешной проверки на читы.
+- `cheat_clean` — `grant_role` выдается после успешной проверки на читы, `check_role` снимается с игрока.
 
-Если правило не задано, бот использует обычные настройки `family_role_id` или `verified_role_id`.
+Если правило не задано, бот использует обычные настройки `family_role_id`, `verified_role_id` и `unverified_role_id`.
 
 ## Деплой На VPS
 

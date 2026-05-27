@@ -1,7 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, PermissionsBitField, } from 'discord.js';
 import { db } from '../database/db.js';
 import { getSetting } from '../database/settings.js';
-import { audit, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
+import { audit, hasAdminRole, hasConfiguredRole, isAdmin, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
 export async function handleProfileCommand(interaction) {
     if (interaction.commandName === 'profile-panel') {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
@@ -29,8 +29,8 @@ export async function handleProfileCommand(interaction) {
     }
     if (interaction.commandName === 'profile-promote') {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-        if (!member || !canPromote(member)) {
-            await interaction.reply(privateReply('Повышать тир могут только наставники и админы.'));
+        if (!member || !hasAdminRole(member)) {
+            await interaction.reply(privateReply('Повышать тир через команду могут только участники с admin_role_id.'));
             return true;
         }
         const player = interaction.options.getUser('player', true);

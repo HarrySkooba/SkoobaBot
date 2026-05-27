@@ -35,6 +35,10 @@ export function isAdmin(member: GuildMember): boolean {
   return member.permissions.has(PermissionFlagsBits.Administrator) || memberHasRole(member, adminRoleId);
 }
 
+export function hasAdminRole(member: GuildMember): boolean {
+  return memberHasRole(member, getSetting(member.guild.id, 'admin_role_id'));
+}
+
 export function isStaff(member: GuildMember): boolean {
   const staffRoleId = getSetting(member.guild.id, 'staff_role_id');
   return isAdmin(member) || memberHasRole(member, staffRoleId);

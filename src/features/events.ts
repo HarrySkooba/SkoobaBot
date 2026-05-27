@@ -13,7 +13,7 @@ import {
 } from 'discord.js';
 import { db } from '../database/db.js';
 import { getSetting } from '../database/settings.js';
-import { audit, getConfiguredTextChannel, hasConfiguredRole, isStaff, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
+import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 
 type EventRow = {
   id: number;
@@ -33,8 +33,8 @@ type EventRow = {
 export async function handleEventCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.commandName === 'event-create') {
     const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-    if (!member || !isStaff(member)) {
-      await interaction.reply(privateReply('Создавать мероприятия может только стафф.'));
+    if (!member || !hasAdminRole(member)) {
+      await interaction.reply(privateReply('Создавать мероприятия могут только участники с admin_role_id.'));
       return true;
     }
 
@@ -71,6 +71,12 @@ export async function handleEventCommand(interaction: ChatInputCommandInteractio
   }
 
   if (interaction.commandName === 'attendance') {
+    const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    if (!member || !hasAdminRole(member)) {
+      await interaction.reply(privateReply('Смотреть посещаемость могут только участники с admin_role_id.'));
+      return true;
+    }
+
     const player = interaction.options.getUser('player', true);
     const rows = db
       .prepare(
@@ -131,8 +137,8 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
   }
 
   const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!member || !isStaff(member)) {
-    await interaction.reply(privateReply('Управлять событием может только стафф.'));
+  if (!member || !hasAdminRole(member)) {
+    await interaction.reply(privateReply('Управлять событием могут только участники с admin_role_id.'));
     return true;
   }
 

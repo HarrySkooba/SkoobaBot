@@ -5,6 +5,7 @@ export const settingKeys = [
   'staff_role_id',
   'family_role_id',
   'verified_role_id',
+  'unverified_role_id',
   'mentor_role_id',
   'cheat_hunter_role_id',
   'admin_panel_channel_id',
