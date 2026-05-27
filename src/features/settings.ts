@@ -104,7 +104,7 @@ export async function handleSettingsButton(interaction: ButtonInteraction): Prom
         [
           'Используй `/setting set key:<ключ> value:<id>` для ролей, каналов и категорий.',
           'Используй `/role-rule` для правил: какая роль проверяется и какая выдается.',
-          'Пример сценариев: `application_accept`, `cheat_clean`, `profile_tier_1`, `event_kapt_access`.',
+          'Пример сценариев: `application_accept`, `cheat_clean`.',
         ].join('\n'),
       ),
     );

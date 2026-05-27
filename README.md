@@ -66,13 +66,10 @@ DATABASE_PATH=./data/skooba.sqlite
 - `admin_role_id`, `staff_role_id`, `family_role_id`, `verified_role_id`, `unverified_role_id`
 - `mentor_role_id`, `cheat_hunter_role_id`
 - `application_review_channel_id`, `application_log_channel_id`
-- `event_channel_id`, `event_log_channel_id`, `default_voice_channel_id`
+- `event_capt_channel_id`, `event_capt_log_channel_id`, `event_mcl_channel_id`, `event_mcl_log_channel_id`, `default_voice_channel_id`
 - `cheat_queue_channel_id`, `cheat_log_channel_id`
 - `profile_log_channel_id`
-- `profile_tier_1_category_id`, `profile_tier_2_category_id`, `profile_tier_3_category_id`
-- `profile_tier_1_role_id`, `profile_tier_2_role_id`, `profile_tier_3_role_id`
-- `kapt_tier_1_role_id`, `kapt_tier_2_role_id`, `kapt_tier_3_role_id`
-- `mcl_tier_1_role_id`, `mcl_tier_2_role_id`, `mcl_tier_3_role_id`
+- `tier_1_role_id`, `tier_2_role_id`, `tier_3_role_id` — общие роли тира для Капт, МЦЛ и профилей
 
 ID можно передавать как чистый ID или вставлять mention роли/канала.
 

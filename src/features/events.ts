@@ -12,7 +12,7 @@ import {
   TextChannel,
 } from 'discord.js';
 import { db } from '../database/db.js';
-import { getSetting } from '../database/settings.js';
+import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRoleId } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 
 type EventRow = {
@@ -56,7 +56,8 @@ export async function handleEventCommand(interaction: ChatInputCommandInteractio
       )
       .run(interaction.guild.id, type, startTime, voiceTime, side, map, voiceChannel?.id ?? getSetting(interaction.guild.id, 'default_voice_channel_id'), interaction.user.id);
     const eventId = Number(result.lastInsertRowid);
-    const channel = (await getConfiguredTextChannel(interaction.guild, 'event_channel_id')) ?? (interaction.channel as TextChannel | null);
+    const channel =
+      (await getConfiguredTextChannel(interaction.guild, getEventPublishChannelKey(type))) ?? (interaction.channel as TextChannel | null);
     if (!channel) {
       await interaction.reply(privateReply('Не найден канал для публикации мероприятия.'));
       return true;
@@ -118,7 +119,7 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
       return true;
     }
 
-    const placement = resolvePlacement(member, event.type);
+    const placement = resolvePlacement(member);
     db.prepare(
       `INSERT INTO event_signups (event_id, user_id, list_type, tier)
        VALUES (?, ?, ?, ?)
@@ -143,7 +144,7 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
   }
 
   if (action === 'notify-main' || action === 'notify-reserve') {
-    await notifyList(interaction, eventId, action === 'notify-main' ? 'main' : 'reserve');
+    await notifyList(interaction, event, action === 'notify-main' ? 'main' : 'reserve');
     return true;
   }
 
@@ -202,12 +203,11 @@ function getEvent(eventId: number, guildId: string): EventRow | null {
   return (db.prepare('SELECT * FROM events WHERE id = ? AND guild_id = ?').get(eventId, guildId) as EventRow | undefined) ?? null;
 }
 
-function resolvePlacement(member: GuildMember, eventType: 'kapt' | 'mcl'): { listType: 'main' | 'reserve'; tier: number | null } {
+function resolvePlacement(member: GuildMember): { listType: 'main' | 'reserve'; tier: number | null } {
   const hasVerified = hasConfiguredRole(member, 'verified_role_id');
-  const prefix = eventType === 'kapt' ? 'kapt' : 'mcl';
 
-  for (const tier of [1, 2, 3]) {
-    const roleId = getSetting(member.guild.id, `${prefix}_tier_${tier}_role_id` as 'kapt_tier_1_role_id');
+  for (const tier of [1, 2, 3] as const) {
+    const roleId = getTierRoleId(member.guild.id, tier);
     if (hasVerified && roleId && member.roles.cache.has(roleId)) {
       return { listType: 'main', tier };
     }
@@ -309,15 +309,15 @@ async function dmFamilyAboutEvent(guild: Guild, eventId: number) {
       failed += 1;
     }
   }
-  await sendToConfiguredChannel(guild, 'event_log_channel_id', `DM о создании события #${eventId}: отправлено ${sent}, не доставлено ${failed}.`);
+  await sendToConfiguredChannel(guild, getEventLogChannelKey(event.type), `DM о создании события #${eventId}: отправлено ${sent}, не доставлено ${failed}.`);
 }
 
-async function notifyList(interaction: ButtonInteraction, eventId: number, listType: 'main' | 'reserve') {
+async function notifyList(interaction: ButtonInteraction, event: EventRow, listType: 'main' | 'reserve') {
   if (!interaction.guild) {
     return;
   }
 
-  const rows = db.prepare('SELECT user_id FROM event_signups WHERE event_id = ? AND list_type = ?').all(eventId, listType) as Array<{ user_id: string }>;
+  const rows = db.prepare('SELECT user_id FROM event_signups WHERE event_id = ? AND list_type = ?').all(event.id, listType) as Array<{ user_id: string }>;
   let sent = 0;
   let failed = 0;
   for (const row of rows) {
@@ -327,7 +327,7 @@ async function notifyList(interaction: ButtonInteraction, eventId: number, listT
       continue;
     }
 
-    const ok = await safeDm(member, `Уведомление по мероприятию #${eventId}: ты находишься в ${listType === 'main' ? 'основном' : 'запасном'} списке.`);
+    const ok = await safeDm(member, `Уведомление по мероприятию #${event.id}: ты находишься в ${listType === 'main' ? 'основном' : 'запасном'} списке.`);
     if (ok) {
       sent += 1;
     } else {
@@ -335,7 +335,7 @@ async function notifyList(interaction: ButtonInteraction, eventId: number, listT
     }
   }
 
-  await sendToConfiguredChannel(interaction.guild, 'event_log_channel_id', `DM списка #${eventId} (${listType}): отправлено ${sent}, не доставлено ${failed}.`);
+  await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `DM списка #${event.id} (${listType}): отправлено ${sent}, не доставлено ${failed}.`);
   await interaction.reply(privateReply(`Рассылка завершена: отправлено ${sent}, не доставлено ${failed}.`));
 }
 
@@ -378,7 +378,7 @@ async function voiceCheck(interaction: ButtonInteraction, event: EventRow) {
   }
 
   const message = missing.length ? `Не были в войсе: ${missing.map((id) => `<@${id}>`).join(', ')}` : 'Все записанные были в войсе.';
-  await sendToConfiguredChannel(interaction.guild, 'event_log_channel_id', `Проверка войса события #${event.id}: ${message}`);
+  await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `Проверка войса события #${event.id}: ${message}`);
   await interaction.reply(privateReply(message.slice(0, 1900)));
 }
 

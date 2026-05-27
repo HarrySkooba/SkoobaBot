@@ -10,25 +10,18 @@ export const settingKeys = [
     'admin_panel_channel_id',
     'application_review_channel_id',
     'application_log_channel_id',
-    'event_channel_id',
-    'event_log_channel_id',
+    'event_capt_channel_id',
+    'event_capt_log_channel_id',
+    'event_mcl_channel_id',
+    'event_mcl_log_channel_id',
     'cheat_queue_channel_id',
     'cheat_log_channel_id',
     'profile_create_channel_id',
     'profile_log_channel_id',
     'default_voice_channel_id',
-    'profile_tier_1_category_id',
-    'profile_tier_2_category_id',
-    'profile_tier_3_category_id',
-    'profile_tier_1_role_id',
-    'profile_tier_2_role_id',
-    'profile_tier_3_role_id',
-    'kapt_tier_1_role_id',
-    'kapt_tier_2_role_id',
-    'kapt_tier_3_role_id',
-    'mcl_tier_1_role_id',
-    'mcl_tier_2_role_id',
-    'mcl_tier_3_role_id',
+    'tier_1_role_id',
+    'tier_2_role_id',
+    'tier_3_role_id',
 ];
 export function isSettingKey(value) {
     return settingKeys.includes(value);
@@ -61,6 +54,15 @@ export function setRoleRule(guildId, scenario, checkRoleId, grantRoleId, updated
        grant_role_id = excluded.grant_role_id,
        updated_by = excluded.updated_by,
        updated_at = excluded.updated_at`).run(guildId, scenario, checkRoleId, grantRoleId, updatedBy);
+}
+export function getTierRoleId(guildId, tier) {
+    return getSetting(guildId, `tier_${tier}_role_id`);
+}
+export function getEventPublishChannelKey(type) {
+    return type === 'kapt' ? 'event_capt_channel_id' : 'event_mcl_channel_id';
+}
+export function getEventLogChannelKey(type) {
+    return type === 'kapt' ? 'event_capt_log_channel_id' : 'event_mcl_log_channel_id';
 }
 export function getRoleRule(guildId, scenario) {
     const row = db
