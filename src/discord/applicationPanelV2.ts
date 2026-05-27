@@ -24,22 +24,20 @@ export function isApplicationsOpen(guildId: string): boolean {
 export function buildApplicationPanelBody(guildId: string): { flags: number; components: V2Component[] } {
   const open = isApplicationsOpen(guildId);
   const bannerUrl = getSetting(guildId, 'application_panel_banner_url');
-  const components: V2Component[] = [];
+
+  const containerChildren: V2Component[] = [];
 
   if (bannerUrl) {
-    components.push({
+    containerChildren.push({
       type: COMPONENT_MEDIA_GALLERY,
       items: [{ media: { url: bannerUrl } }],
     });
   }
 
-  components.push({
-    type: COMPONENT_CONTAINER,
-    accent_color: PANEL_ACCENT_BLACK,
-    components: [
-      {
-        type: COMPONENT_TEXT_DISPLAY,
-        content: [
+  containerChildren.push(
+    {
+      type: COMPONENT_TEXT_DISPLAY,
+      content: [
           '❗ **Мы принимаем заявки в семью Skooba** ❗',
           'Для вступления в семью требуются откаты с MCL/CAPT И GUNGAME.',
           '',
@@ -60,30 +58,35 @@ export function buildApplicationPanelBody(guildId: string): { flags: number; com
           '',
           '**СЕРЬЁЗНО ОТНЕСИТЕСЬ К ШАБЛОНУ ПОДАЧИ.** Внимательно читайте и проверяйте все пункты заполнения. Сообщения в ЛС по типу «Не увидел» «Плохо прочитал» «Не понял» «Протупил» и т.д. будут рассматриваться как отказ.',
         ].join('\n'),
-      },
-      { type: COMPONENT_SEPARATOR, divider: true, spacing: 2 },
-      {
-        type: COMPONENT_TEXT_DISPLAY,
-        content: open ? '### ✅ Приём заявок открыт' : '### 🔒 Приём заявок закрыт',
-      },
-      {
-        type: COMPONENT_ACTION_ROW,
-        components: [
-          {
-            type: COMPONENT_BUTTON,
-            style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
-            label: open ? 'Подать заявку' : 'Приём заявок закрыт',
-            custom_id: 'application:open',
-            disabled: !open,
-          },
-        ],
-      },
-    ],
-  });
+    },
+    { type: COMPONENT_SEPARATOR, divider: true, spacing: 2 },
+    {
+      type: COMPONENT_TEXT_DISPLAY,
+      content: open ? '### ✅ Приём заявок открыт' : '### 🔒 Приём заявок закрыт',
+    },
+    {
+      type: COMPONENT_ACTION_ROW,
+      components: [
+        {
+          type: COMPONENT_BUTTON,
+          style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
+          label: open ? 'Подать заявку' : 'Приём заявок закрыт',
+          custom_id: 'application:open',
+          disabled: !open,
+        },
+      ],
+    },
+  );
 
   return {
     flags: MessageFlags.IsComponentsV2,
-    components,
+    components: [
+      {
+        type: COMPONENT_CONTAINER,
+        accent_color: PANEL_ACCENT_BLACK,
+        components: containerChildren,
+      },
+    ],
   };
 }
 

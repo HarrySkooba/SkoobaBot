@@ -16,63 +16,60 @@ export function isApplicationsOpen(guildId) {
 export function buildApplicationPanelBody(guildId) {
     const open = isApplicationsOpen(guildId);
     const bannerUrl = getSetting(guildId, 'application_panel_banner_url');
-    const components = [];
+    const containerChildren = [];
     if (bannerUrl) {
-        components.push({
+        containerChildren.push({
             type: COMPONENT_MEDIA_GALLERY,
             items: [{ media: { url: bannerUrl } }],
         });
     }
-    components.push({
-        type: COMPONENT_CONTAINER,
-        accent_color: PANEL_ACCENT_BLACK,
+    containerChildren.push({
+        type: COMPONENT_TEXT_DISPLAY,
+        content: [
+            '❗ **Мы принимаем заявки в семью Skooba** ❗',
+            'Для вступления в семью требуются откаты с MCL/CAPT И GUNGAME.',
+            '',
+            'Решение направляется ботом в личные сообщения.',
+            'Отсутствие ответа в указанный срок означает отказ в заявке.',
+            'Будем рады видеть вас в наших рядах!',
+            'Заявки в семью принимаются только на сервер **Orlando**.',
+            '',
+            'Внимательно прочитайте шаблон заявки при её подаче — там тоже есть информация.',
+            'В заявке требуются полные откаты с GG и МП (MCL ВЗЗ Capt).',
+            '',
+            '**Дополнительные правила в заявке:**',
+            '• Откаты с GG должны быть записаны не более 1 недели назад.',
+            '• Откаты с МП должны быть записаны не более 60 дней назад.',
+            '• Откаты не должны быть сделаны как нарезка или мувик.',
+            '• Минимальная длина откатов с GG — от 5 минут.',
+            '• Любое нарушение условий подачи откатов — скорее всего будет причиной отказа без исключений.',
+            '',
+            '**СЕРЬЁЗНО ОТНЕСИТЕСЬ К ШАБЛОНУ ПОДАЧИ.** Внимательно читайте и проверяйте все пункты заполнения. Сообщения в ЛС по типу «Не увидел» «Плохо прочитал» «Не понял» «Протупил» и т.д. будут рассматриваться как отказ.',
+        ].join('\n'),
+    }, { type: COMPONENT_SEPARATOR, divider: true, spacing: 2 }, {
+        type: COMPONENT_TEXT_DISPLAY,
+        content: open ? '### ✅ Приём заявок открыт' : '### 🔒 Приём заявок закрыт',
+    }, {
+        type: COMPONENT_ACTION_ROW,
         components: [
             {
-                type: COMPONENT_TEXT_DISPLAY,
-                content: [
-                    '❗ **Мы принимаем заявки в семью Skooba** ❗',
-                    'Для вступления в семью требуются откаты с MCL/CAPT И GUNGAME.',
-                    '',
-                    'Решение направляется ботом в личные сообщения.',
-                    'Отсутствие ответа в указанный срок означает отказ в заявке.',
-                    'Будем рады видеть вас в наших рядах!',
-                    'Заявки в семью принимаются только на сервер **Orlando**.',
-                    '',
-                    'Внимательно прочитайте шаблон заявки при её подаче — там тоже есть информация.',
-                    'В заявке требуются полные откаты с GG и МП (MCL ВЗЗ Capt).',
-                    '',
-                    '**Дополнительные правила в заявке:**',
-                    '• Откаты с GG должны быть записаны не более 1 недели назад.',
-                    '• Откаты с МП должны быть записаны не более 60 дней назад.',
-                    '• Откаты не должны быть сделаны как нарезка или мувик.',
-                    '• Минимальная длина откатов с GG — от 5 минут.',
-                    '• Любое нарушение условий подачи откатов — скорее всего будет причиной отказа без исключений.',
-                    '',
-                    '**СЕРЬЁЗНО ОТНЕСИТЕСЬ К ШАБЛОНУ ПОДАЧИ.** Внимательно читайте и проверяйте все пункты заполнения. Сообщения в ЛС по типу «Не увидел» «Плохо прочитал» «Не понял» «Протупил» и т.д. будут рассматриваться как отказ.',
-                ].join('\n'),
-            },
-            { type: COMPONENT_SEPARATOR, divider: true, spacing: 2 },
-            {
-                type: COMPONENT_TEXT_DISPLAY,
-                content: open ? '### ✅ Приём заявок открыт' : '### 🔒 Приём заявок закрыт',
-            },
-            {
-                type: COMPONENT_ACTION_ROW,
-                components: [
-                    {
-                        type: COMPONENT_BUTTON,
-                        style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
-                        label: open ? 'Подать заявку' : 'Приём заявок закрыт',
-                        custom_id: 'application:open',
-                        disabled: !open,
-                    },
-                ],
+                type: COMPONENT_BUTTON,
+                style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
+                label: open ? 'Подать заявку' : 'Приём заявок закрыт',
+                custom_id: 'application:open',
+                disabled: !open,
             },
         ],
     });
     return {
         flags: MessageFlags.IsComponentsV2,
-        components,
+        components: [
+            {
+                type: COMPONENT_CONTAINER,
+                accent_color: PANEL_ACCENT_BLACK,
+                components: containerChildren,
+            },
+        ],
     };
 }
 export async function sendApplicationPanel(channel, guildId, updatedBy) {
