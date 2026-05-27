@@ -66,6 +66,8 @@ DATABASE_PATH=./data/skooba.sqlite
 - `admin_role_id`, `staff_role_id`, `family_role_id`, `verified_role_id`, `unverified_role_id`
 - `mentor_role_id`, `cheat_hunter_role_id`
 - `application_review_channel_id`, `application_log_channel_id`
+- `application_panel_banner_url` — URL GIF/изображения в шапке панели заявок
+- `applications_open` — `true` / `false` (обычно через `/application-intake`)
 - `event_capt_channel_id`, `event_capt_log_channel_id`, `event_mcl_channel_id`, `event_mcl_log_channel_id`, `default_voice_channel_id`
 - `cheat_queue_channel_id`, `cheat_log_channel_id`
 - `profile_log_channel_id`
@@ -81,7 +83,8 @@ ID можно передавать как чистый ID или вставля�
 - `/setting list` — показать текущие настройки.
 - `/setting delete` — удалить настройку по ключу, в том числе устаревшую.
 - `/role-rule` — настроить проверяемую и выдаваемую роль для сценария.
-- `/application-panel` — опубликовать кнопку подачи заявки.
+- `/application-panel` — опубликовать панель заявок (Components v2: баннер, текст, статус приёма, кнопка).
+- `/application-intake open|close` — открыть или закрыть приём заявок (обновляет панель).
 - `/role-panel` — панель с кнопками самовыдачи `family_role_id` и `unverified_role_id` (только админ публикует).
 - `/cheat-panel` — опубликовать кнопку заявки на проверку читов.
 - `/cheat-remove` — убрать игрока из активной очереди проверки на читы, если очередь зависла или заявка забагалась.

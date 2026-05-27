@@ -3,6 +3,7 @@ import {
   ButtonBuilder,
   ButtonInteraction,
   ButtonStyle,
+  ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
   ModalBuilder,
@@ -11,10 +12,42 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { db } from '../database/db.js';
+import { setSetting } from '../database/settings.js';
+import { isApplicationsOpen, refreshApplicationPanel, sendApplicationPanel } from '../discord/applicationPanelV2.js';
 import { audit, getConfiguredTextChannel, isStaff, privateReply, sendToConfiguredChannel } from '../discord/helpers.js';
 import { grantApplicationAcceptRoles } from './roleRecovery.js';
 
 export async function handleApplicationCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
+  if (interaction.commandName === 'application-intake') {
+    const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+    if (!member || !isStaff(member)) {
+      await interaction.reply(privateReply('Приём заявок могут менять только стафф.'));
+      return true;
+    }
+
+    if (!interaction.guild) {
+      await interaction.reply(privateReply('Команда работает только на сервере.'));
+      return true;
+    }
+
+    const subcommand = interaction.options.getSubcommand();
+    const open = subcommand === 'open';
+    setSetting(interaction.guild.id, 'applications_open', open ? 'true' : 'false', interaction.user.id);
+
+    const updated = await refreshApplicationPanel(interaction.client, interaction.guild.id);
+    if (!updated) {
+      await interaction.reply(
+        privateReply(
+          `Приём заявок ${open ? 'открыт' : 'закрыт'}, но панель не обновлена: сначала опубликуй \`/application-panel\` в канале заявок.`,
+        ),
+      );
+      return true;
+    }
+
+    await interaction.reply(privateReply(`Приём заявок ${open ? 'открыт' : 'закрыт'}. Панель обновлена.`));
+    return true;
+  }
+
   if (interaction.commandName !== 'application-panel') {
     return false;
   }
@@ -25,24 +58,33 @@ export async function handleApplicationCommand(interaction: ChatInputCommandInte
     return true;
   }
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('application:open').setLabel('Подать заявку').setStyle(ButtonStyle.Primary),
-  );
-  if (!interaction.channel || !('send' in interaction.channel)) {
+  if (!interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
     await interaction.reply(privateReply('Не найден текстовый канал для публикации панели.'));
     return true;
   }
 
-  await interaction.channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('Заявка в семью Skooba')
-        .setDescription('Нажми кнопку ниже и заполни анкету. После этого стафф назначит обзвон или примет решение.')
-        .setColor(0x5865f2),
-    ],
-    components: [row],
-  });
-  await interaction.reply(privateReply('Панель заявок опубликована.'));
+  if (!interaction.guild) {
+    await interaction.reply(privateReply('Команда работает только на сервере.'));
+    return true;
+  }
+
+  try {
+    await sendApplicationPanel(interaction.channel, interaction.guild.id, interaction.user.id);
+  } catch (error) {
+    console.error('Failed to send application panel (Components v2):', error);
+    await interaction.reply(
+      privateReply(
+        'Не удалось опубликовать панель. Проверь URL баннера (`application_panel_banner_url`) и права бота в канале.',
+      ),
+    );
+    return true;
+  }
+
+  await interaction.reply(
+    privateReply(
+      'Панель заявок опубликована (Components v2). Баннер: `/setting set key:application_panel_banner_url`. Приём: `/application-intake open|close`.',
+    ),
+  );
   return true;
 }
 
@@ -51,13 +93,34 @@ export async function handleApplicationButton(interaction: ButtonInteraction): P
     return false;
   }
 
+  if (!interaction.guild) {
+    await interaction.reply(privateReply('Заявки работают только на сервере.'));
+    return true;
+  }
+
   if (interaction.customId === 'application:open') {
+    if (!isApplicationsOpen(interaction.guild.id)) {
+      await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
+      return true;
+    }
+
     const modal = new ModalBuilder().setCustomId('application:modal').setTitle('Заявка в Skooba');
     modal.addComponents(
-      inputRow('nickname', 'Игровой ник', TextInputStyle.Short),
-      inputRow('age', 'Возраст', TextInputStyle.Short),
-      inputRow('experience', 'Опыт / прошлые семьи', TextInputStyle.Paragraph),
-      inputRow('timezone', 'Часовой пояс и удобное время обзвона', TextInputStyle.Short),
+      inputRow('identity', 'Ник в игре | Статик | Возраст', TextInputStyle.Short, {
+        placeholder: 'Harry Skooba | 5595 | 21',
+      }),
+      inputRow('majestic_experience', 'Опыт на Majestic', TextInputStyle.Paragraph, {
+        placeholder: '15 server - 1год, 09 server - 2года',
+      }),
+      inputRow('families', 'В каких семьях состоял и почему ушел', TextInputStyle.Paragraph, {
+        placeholder: 'Название - Причина',
+      }),
+      inputRow('schedule', 'Часовой пояс | Средний онлайн', TextInputStyle.Short, {
+        placeholder: '+4 | 5-9',
+      }),
+      inputRow('rollbacks', 'Откаты', TextInputStyle.Paragraph, {
+        placeholder: 'GG - ссылка, MCL - ссылка, CAPT - ссылка',
+      }),
     );
     await interaction.showModal(modal);
     return true;
@@ -73,7 +136,10 @@ export async function handleApplicationButton(interaction: ButtonInteraction): P
 
   if (action === 'call') {
     const modal = new ModalBuilder().setCustomId(`application-call:${applicationId}`).setTitle('Назначить обзвон');
-    modal.addComponents(inputRow('scheduled_for', 'Дата/время обзвона', TextInputStyle.Short), inputRow('notes', 'Комментарий', TextInputStyle.Paragraph, false));
+    modal.addComponents(
+      inputRow('scheduled_for', 'Дата/время обзвона', TextInputStyle.Short),
+      inputRow('notes', 'Комментарий', TextInputStyle.Paragraph, { required: false }),
+    );
     await interaction.showModal(modal);
     return true;
   }
@@ -93,11 +159,17 @@ export async function handleApplicationModal(interaction: ModalSubmitInteraction
       return true;
     }
 
+    if (!isApplicationsOpen(interaction.guild.id)) {
+      await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
+      return true;
+    }
+
     const answers = {
-      nickname: interaction.fields.getTextInputValue('nickname'),
-      age: interaction.fields.getTextInputValue('age'),
-      experience: interaction.fields.getTextInputValue('experience'),
-      timezone: interaction.fields.getTextInputValue('timezone'),
+      identity: interaction.fields.getTextInputValue('identity'),
+      majestic_experience: interaction.fields.getTextInputValue('majestic_experience'),
+      families: interaction.fields.getTextInputValue('families'),
+      schedule: interaction.fields.getTextInputValue('schedule'),
+      rollbacks: interaction.fields.getTextInputValue('rollbacks'),
     };
     const result = db
       .prepare('INSERT INTO applications (guild_id, user_id, answers_json) VALUES (?, ?, ?)')
@@ -128,10 +200,27 @@ export async function handleApplicationModal(interaction: ModalSubmitInteraction
   return false;
 }
 
-function inputRow(customId: string, label: string, style: TextInputStyle, required = true) {
-  return new ActionRowBuilder<TextInputBuilder>().addComponents(
-    new TextInputBuilder().setCustomId(customId).setLabel(label).setStyle(style).setRequired(required),
-  );
+function inputRow(
+  customId: string,
+  label: string,
+  style: TextInputStyle,
+  options: { required?: boolean; placeholder?: string } = {},
+) {
+  const input = new TextInputBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(style)
+    .setRequired(options.required ?? true);
+
+  if (options.placeholder) {
+    input.setPlaceholder(options.placeholder.slice(0, 100));
+  }
+
+  return new ActionRowBuilder<TextInputBuilder>().addComponents(input);
+}
+
+function truncateEmbedField(value: string, max = 1024): string {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
 }
 
 async function publishApplication(interaction: ModalSubmitInteraction, applicationId: number, answers: Record<string, string>) {
@@ -155,10 +244,11 @@ async function publishApplication(interaction: ModalSubmitInteraction, applicati
         .setTitle(`Заявка #${applicationId}`)
         .setDescription(`<@${interaction.user.id}>`)
         .addFields(
-          { name: 'Ник', value: answers.nickname },
-          { name: 'Возраст', value: answers.age },
-          { name: 'Опыт', value: answers.experience.slice(0, 1024) },
-          { name: 'Время обзвона', value: answers.timezone },
+          { name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity) },
+          { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience) },
+          { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families) },
+          { name: 'Часовой пояс | Онлайн', value: truncateEmbedField(answers.schedule) },
+          { name: 'Откаты', value: truncateEmbedField(answers.rollbacks) },
         )
         .setColor(0xf1c40f),
     ],

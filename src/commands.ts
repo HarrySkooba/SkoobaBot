@@ -44,8 +44,14 @@ export const commands = [
     .addRoleOption((option) => option.setName('grant_role').setDescription('Роль, которая выдается после успеха.')),
   new SlashCommandBuilder()
     .setName('application-panel')
-    .setDescription('Опубликовать сообщение с кнопкой подачи заявки.')
+    .setDescription('Опубликовать панель заявок (Components v2).')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName('application-intake')
+    .setDescription('Открыть или закрыть приём заявок на панели.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((subcommand) => subcommand.setName('open').setDescription('Открыть приём заявок.'))
+    .addSubcommand((subcommand) => subcommand.setName('close').setDescription('Закрыть приём заявок.')),
   new SlashCommandBuilder()
     .setName('role-panel')
     .setDescription('Опубликовать панель самовыдачи ролей семьи и Unverified.')
