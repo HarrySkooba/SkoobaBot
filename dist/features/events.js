@@ -2,56 +2,16 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder
 import { db } from '../database/db.js';
 import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRoleId } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
+const CAPT_SIDE_LABELS = {
+    attack: 'Атака',
+    deff: 'Деф',
+};
 export async function handleEventCommand(interaction) {
-    if (interaction.commandName === 'event-create-capt' || interaction.commandName === 'event-create-mcl') {
-        if (!interaction.guild) {
-            await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
-            return true;
-        }
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!member || !hasAdminRole(member)) {
-            await interaction.editReply('Создавать мероприятия могут только участники с admin_role_id.');
-            return true;
-        }
-        try {
-            const voiceChannel = interaction.options.getChannel('voice');
-            const selectedVoiceId = voiceChannel?.type === ChannelType.GuildVoice ? voiceChannel.id : null;
-            const input = interaction.commandName === 'event-create-capt'
-                ? {
-                    type: 'kapt',
-                    startTime: interaction.options.getString('start_time', true),
-                    voiceTime: interaction.options.getString('voice_time', true),
-                    side: interaction.options.getString('side', true),
-                    map: interaction.options.getString('map', true),
-                    voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, selectedVoiceId),
-                    imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
-                }
-                : {
-                    type: 'mcl',
-                    startTime: interaction.options.getString('start_time', true),
-                    voiceTime: interaction.options.getString('voice_time', true),
-                    side: '-',
-                    map: '-',
-                    voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, selectedVoiceId),
-                    imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
-                    mclSubtype: interaction.options.getString('subtype', true),
-                    teleportTime: interaction.options.getString('teleport_time', true),
-                    playerCount: interaction.options.getString('player_count', true),
-                };
-            const published = await createAndPublishEvent(interaction.guild, interaction.user.id, input);
-            if (!published) {
-                await interaction.editReply(`Не удалось опубликовать мероприятие. Проверь канал ${input.type === 'kapt' ? 'event_capt_channel_id' : 'event_mcl_channel_id'} и права бота.`);
-                return true;
-            }
-            await interaction.editReply(`Мероприятие #${published.eventId} создано: ${published.messageUrl}`);
-        }
-        catch (error) {
-            console.error('event-create failed:', error);
-            const reason = error instanceof Error ? error.message : 'неизвестная ошибка';
-            await interaction.editReply(`Не удалось создать мероприятие: ${reason.slice(0, 1800)}`);
-        }
-        return true;
+    if (interaction.commandName === 'event-create-capt') {
+        return handleEventCreateCaptCommand(interaction);
+    }
+    if (interaction.commandName === 'event-create-mcl') {
+        return handleEventCreateMclCommand(interaction);
     }
     if (interaction.commandName === 'attendance') {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
@@ -70,6 +30,70 @@ export async function handleEventCommand(interaction) {
         return true;
     }
     return false;
+}
+async function handleEventCreateCaptCommand(interaction) {
+    if (!interaction.guild) {
+        await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
+        return true;
+    }
+    const input = {
+        type: 'kapt',
+        startTime: interaction.options.getString('start_time', true),
+        voiceTime: interaction.options.getString('voice_time', true),
+        side: interaction.options.getString('side', true),
+        map: interaction.options.getString('map', true),
+        voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, getSelectedVoiceChannelId(interaction)),
+        imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+    };
+    return executeEventCreate(interaction, input, 'event-create-capt');
+}
+async function handleEventCreateMclCommand(interaction) {
+    if (!interaction.guild) {
+        await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
+        return true;
+    }
+    const input = {
+        type: 'mcl',
+        startTime: interaction.options.getString('start_time', true),
+        voiceTime: interaction.options.getString('voice_time', true),
+        side: '-',
+        map: '-',
+        voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, getSelectedVoiceChannelId(interaction)),
+        imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+        mclSubtype: interaction.options.getString('subtype', true),
+        teleportTime: interaction.options.getString('teleport_time', true),
+        playerCount: interaction.options.getString('player_count', true),
+    };
+    return executeEventCreate(interaction, input, 'event-create-mcl');
+}
+function getSelectedVoiceChannelId(interaction) {
+    const voiceChannel = interaction.options.getChannel('voice');
+    return voiceChannel?.type === ChannelType.GuildVoice ? voiceChannel.id : null;
+}
+async function executeEventCreate(interaction, input, commandLabel) {
+    if (!interaction.guild) {
+        return true;
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    if (!member || !hasAdminRole(member)) {
+        await interaction.editReply('Создавать мероприятия могут только участники с admin_role_id.');
+        return true;
+    }
+    try {
+        const published = await createAndPublishEvent(interaction.guild, interaction.user.id, input);
+        if (!published) {
+            await interaction.editReply(`Не удалось опубликовать мероприятие. Проверь канал ${input.type === 'kapt' ? 'event_capt_channel_id' : 'event_mcl_channel_id'} и права бота.`);
+            return true;
+        }
+        await interaction.editReply(`Мероприятие #${published.eventId} создано: ${published.messageUrl}`);
+    }
+    catch (error) {
+        console.error(`${commandLabel} failed:`, error);
+        const reason = error instanceof Error ? error.message : 'неизвестная ошибка';
+        await interaction.editReply(`Не удалось создать мероприятие: ${reason.slice(0, 1800)}`);
+    }
+    return true;
 }
 export async function handleEventButton(interaction) {
     if (!interaction.customId.startsWith('event:')) {
@@ -218,10 +242,13 @@ function getEventTypeLabel(event) {
     }
     return event.mcl_subtype === 'vzz' ? 'ВЗЗ' : 'МЦЛ';
 }
+function formatCaptSide(side) {
+    return CAPT_SIDE_LABELS[side] ?? side;
+}
 function buildEventDescription(event) {
     const lines = [];
     if (event.type === 'kapt') {
-        lines.push(`Сторона: **${event.side}**`, `Карта: **${event.map}**`);
+        lines.push(`Сторона: **${formatCaptSide(event.side)}**`, `Карта: **${event.map}**`);
     }
     else {
         lines.push(`Тип: **${getEventTypeLabel(event)}**`);
@@ -359,7 +386,7 @@ async function dmFamilyAboutEvent(guild, eventId) {
     let failed = 0;
     const typeLabel = getEventTypeLabel(event);
     const details = event.type === 'kapt'
-        ? `карта **${event.map}**, сторона **${event.side}**`
+        ? `карта **${event.map}**, сторона **${formatCaptSide(event.side)}**`
         : `тип **${typeLabel}**, игроков **${event.player_count ?? '?'}**, телепорт **${event.teleport_time ?? '-'}**`;
     const dmText = `Создано новое МП **${typeLabel}** #${event.id}: ${details}, старт **${event.start_time}**, войс **${event.voice_time}**. Запишись в канале мероприятий.`;
     for (const [, member] of familyRole.members) {
