@@ -1,9 +1,9 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageFlags, } from 'discord.js';
 import { db } from '../database/db.js';
 import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRoleId } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 export async function handleEventCommand(interaction) {
-    if (interaction.commandName === 'event-create') {
+    if (interaction.commandName === 'event-create-capt' || interaction.commandName === 'event-create-mcl') {
         const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
         if (!member || !hasAdminRole(member)) {
             await interaction.reply(privateReply('Создавать мероприятия могут только участники с admin_role_id.'));
@@ -13,27 +13,35 @@ export async function handleEventCommand(interaction) {
             await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
             return true;
         }
-        const type = interaction.options.getString('type', true);
-        const startTime = interaction.options.getString('start_time', true);
-        const voiceTime = interaction.options.getString('voice_time', true);
-        const side = interaction.options.getString('side', true);
-        const map = interaction.options.getString('map', true);
-        const voiceChannel = interaction.options.getChannel('voice');
-        const result = db
-            .prepare(`INSERT INTO events (guild_id, type, start_time, voice_time, side, map, voice_channel_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-            .run(interaction.guild.id, type, startTime, voiceTime, side, map, voiceChannel?.id ?? getSetting(interaction.guild.id, 'default_voice_channel_id'), interaction.user.id);
-        const eventId = Number(result.lastInsertRowid);
-        const channel = (await getConfiguredTextChannel(interaction.guild, getEventPublishChannelKey(type))) ?? interaction.channel;
-        if (!channel) {
-            await interaction.reply(privateReply('Не найден канал для публикации мероприятия.'));
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const input = interaction.commandName === 'event-create-capt'
+            ? {
+                type: 'kapt',
+                startTime: interaction.options.getString('start_time', true),
+                voiceTime: interaction.options.getString('voice_time', true),
+                side: interaction.options.getString('side', true),
+                map: interaction.options.getString('map', true),
+                voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, interaction.options.getChannel('voice')?.id ?? null),
+                imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+            }
+            : {
+                type: 'mcl',
+                startTime: interaction.options.getString('start_time', true),
+                voiceTime: interaction.options.getString('voice_time', true),
+                side: '—',
+                map: '—',
+                voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, interaction.options.getChannel('voice')?.id ?? null),
+                imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+                mclSubtype: interaction.options.getString('subtype', true),
+                teleportTime: interaction.options.getString('teleport_time', true),
+                playerCount: interaction.options.getString('player_count', true),
+            };
+        const eventId = await createAndPublishEvent(interaction.guild, interaction.user.id, input);
+        if (!eventId) {
+            await interaction.editReply('Не найден канал для публикации мероприятия.');
             return true;
         }
-        const message = await channel.send(await renderEventMessage(eventId, interaction.guild));
-        db.prepare('UPDATE events SET message_channel_id = ?, message_id = ? WHERE id = ?').run(channel.id, message.id, eventId);
-        await dmFamilyAboutEvent(interaction.guild, eventId);
-        audit(interaction.guild.id, 'event.created', { eventId, type, startTime, voiceTime, side, map }, interaction.user.id);
-        await interaction.reply(privateReply(`Мероприятие #${eventId} создано: ${message.url}`));
+        await interaction.editReply(`Мероприятие #${eventId} создано.`);
         return true;
     }
     if (interaction.commandName === 'attendance') {
@@ -69,24 +77,29 @@ export async function handleEventButton(interaction) {
         await interaction.reply(privateReply('Мероприятие не найдено.'));
         return true;
     }
-    if (action === 'signup') {
-        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-        if (!member) {
-            await interaction.reply(privateReply('Не удалось получить участника.'));
+    if (action === 'signup' || action === 'leave') {
+        if (isEventListClosed(event)) {
+            await interaction.reply(privateReply('Запись на это МП закрыта.'));
             return true;
         }
-        const placement = resolvePlacement(member);
-        db.prepare(`INSERT INTO event_signups (event_id, user_id, list_type, tier)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(event_id, user_id) DO UPDATE SET list_type = excluded.list_type, tier = excluded.tier`).run(eventId, interaction.user.id, placement.listType, placement.tier);
-        await refreshEventMessage(interaction.guild, eventId);
-        await interaction.reply(privateReply(`Ты записан в ${placement.listType === 'main' ? `основной список, тир ${placement.tier}` : 'запасной список'}.`));
-        return true;
-    }
-    if (action === 'leave') {
+        await interaction.deferUpdate();
+        if (action === 'signup') {
+            const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+            if (!member) {
+                await interaction.followUp(privateReply('Не удалось получить участника.'));
+                return true;
+            }
+            const placement = resolvePlacement(member);
+            db.prepare(`INSERT INTO event_signups (event_id, user_id, list_type, tier)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(event_id, user_id) DO UPDATE SET list_type = excluded.list_type, tier = excluded.tier`).run(eventId, interaction.user.id, placement.listType, placement.tier);
+            await refreshEventMessage(interaction.guild, eventId);
+            await interaction.followUp(privateReply(`Ты записан в ${placement.listType === 'main' ? `основной список, тир ${placement.tier}` : 'запасной список'}.`));
+            return true;
+        }
         db.prepare('DELETE FROM event_signups WHERE event_id = ? AND user_id = ?').run(eventId, interaction.user.id);
         await refreshEventMessage(interaction.guild, eventId);
-        await interaction.reply(privateReply('Ты удален из списка.'));
+        await interaction.followUp(privateReply('Ты удален из списка.'));
         return true;
     }
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
@@ -95,15 +108,31 @@ export async function handleEventButton(interaction) {
         return true;
     }
     if (action === 'notify-main' || action === 'notify-reserve') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         await notifyList(interaction, event, action === 'notify-main' ? 'main' : 'reserve');
         return true;
     }
     if (action === 'voice-check') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         await voiceCheck(interaction, event);
         return true;
     }
     if (action === 'export') {
         await interaction.reply(privateReply(formatExport(eventId)));
+        return true;
+    }
+    if (action === 'close-list') {
+        await interaction.deferUpdate();
+        const nextClosed = isEventListClosed(event) ? 0 : 1;
+        db.prepare('UPDATE events SET list_closed = ?, updated_at = unixepoch() WHERE id = ?').run(nextClosed, eventId);
+        await refreshEventMessage(interaction.guild, eventId);
+        await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `МП #${eventId}: запись ${nextClosed ? 'закрыта' : 'открыта'} админом <@${interaction.user.id}>.`);
+        audit(interaction.guild.id, 'event.list_toggled', { eventId, listClosed: Boolean(nextClosed) }, interaction.user.id);
+        return true;
+    }
+    if (action === 'delete') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await deleteEventMessage(interaction, event);
         return true;
     }
     return true;
@@ -153,22 +182,102 @@ function resolvePlacement(member) {
     }
     return { listType: 'reserve', tier: null };
 }
-async function renderEventMessage(eventId, guild) {
+function isEventListClosed(event) {
+    return Boolean(event.list_closed ?? 0);
+}
+function resolveEventVoiceChannelId(guildId, selectedVoiceChannelId) {
+    return selectedVoiceChannelId ?? getSetting(guildId, 'default_voice_channel_id');
+}
+function getEventTypeLabel(event) {
+    if (event.type === 'kapt') {
+        return 'Капт';
+    }
+    return event.mcl_subtype === 'vzz' ? 'ВЗЗ' : 'МЦЛ';
+}
+function buildEventDescription(event) {
+    const lines = [];
+    if (event.type === 'kapt') {
+        lines.push(`Сторона: **${event.side}**`, `Карта: **${event.map}**`);
+    }
+    else {
+        lines.push(`Тип: **${getEventTypeLabel(event)}**`);
+        if (event.teleport_time) {
+            lines.push(`Телепорт: **${event.teleport_time}**`);
+        }
+        if (event.player_count) {
+            lines.push(`Игроков: **${event.player_count}**`);
+        }
+    }
+    lines.push(`Начало: **${event.start_time}**`, `Зайти в войс: **${event.voice_time}**`);
+    if (event.voice_channel_id) {
+        lines.push(`Voice: <#${event.voice_channel_id}>`);
+    }
+    return lines.join('\n');
+}
+function buildEventAnnounceContent(event, familyRoleId) {
+    const typeLabel = getEventTypeLabel(event);
+    if (event.type === 'kapt') {
+        return `<@&${familyRoleId}> создано новое МП **${typeLabel}** на карте **${event.map}**.`;
+    }
+    return `<@&${familyRoleId}> создано новое МП **${typeLabel}** (игроков: **${event.player_count ?? '?'}**).`;
+}
+async function createAndPublishEvent(guild, createdBy, input) {
+    const result = db
+        .prepare(`INSERT INTO events (
+         guild_id, type, start_time, voice_time, side, map, voice_channel_id, created_by,
+         mcl_subtype, teleport_time, player_count, image_url
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(guild.id, input.type, input.startTime, input.voiceTime, input.side, input.map, input.voiceChannelId, createdBy, input.mclSubtype ?? null, input.teleportTime ?? null, input.playerCount ?? null, input.imageUrl);
+    const eventId = Number(result.lastInsertRowid);
+    const channel = (await getConfiguredTextChannel(guild, getEventPublishChannelKey(input.type))) ?? null;
+    if (!channel) {
+        return null;
+    }
+    const message = await channel.send(buildEventMessagePayload(eventId, guild, { announce: true }));
+    db.prepare('UPDATE events SET message_channel_id = ?, message_id = ? WHERE id = ?').run(channel.id, message.id, eventId);
+    await dmFamilyAboutEvent(guild, eventId);
+    audit(guild.id, 'event.created', { eventId, ...input }, createdBy);
+    return eventId;
+}
+function buildEventMessagePayload(eventId, guild, options) {
     const event = getEvent(eventId, guild.id);
     if (!event) {
         throw new Error(`Event ${eventId} not found`);
     }
     const lists = getEventLists(eventId);
+    const listClosed = isEventListClosed(event);
+    const typeLabel = getEventTypeLabel(event);
     const embed = new EmbedBuilder()
-        .setTitle(`${event.type === 'kapt' ? 'Капт' : 'МЦЛ'} #${event.id}`)
-        .setDescription(`Сторона: **${event.side}**\nКарта: **${event.map}**\nНачало: **${event.start_time}**\nЗайти в войс: **${event.voice_time}**`)
-        .addFields({ name: 'Основной Тир 1', value: formatUsers(lists.main1), inline: true }, { name: 'Основной Тир 2', value: formatUsers(lists.main2), inline: true }, { name: 'Основной Тир 3', value: formatUsers(lists.main3), inline: true }, { name: 'Запасной', value: formatUsers(lists.reserve), inline: false })
+        .setTitle(`${typeLabel} #${event.id}`)
+        .setDescription(buildEventDescription(event))
+        .addFields({ name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' }, { name: 'Основной Тир 1', value: formatUsers(lists.main1), inline: true }, { name: 'Основной Тир 2', value: formatUsers(lists.main2), inline: true }, { name: 'Основной Тир 3', value: formatUsers(lists.main3), inline: true }, { name: 'Запасной', value: formatUsers(lists.reserve), inline: false })
         .setColor(event.type === 'kapt' ? 0xed4245 : 0x5865f2);
+    if (event.image_url) {
+        embed.setImage(event.image_url);
+    }
     const components = [
-        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`event:signup:${eventId}`).setLabel('Записаться').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`event:leave:${eventId}`).setLabel('Отписаться').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`event:export:${eventId}`).setLabel('Экспорт').setStyle(ButtonStyle.Secondary)),
+        new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(`event:signup:${eventId}`)
+            .setLabel('Записаться')
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(listClosed), new ButtonBuilder()
+            .setCustomId(`event:leave:${eventId}`)
+            .setLabel('Отписаться')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(listClosed), new ButtonBuilder().setCustomId(`event:export:${eventId}`).setLabel('Экспорт').setStyle(ButtonStyle.Secondary)),
         new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`event:notify-main:${eventId}`).setLabel('Уведомить основной').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`event:notify-reserve:${eventId}`).setLabel('Уведомить запас').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`event:voice-check:${eventId}`).setLabel('Проверить войс').setStyle(ButtonStyle.Danger)),
+        new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(`event:close-list:${eventId}`)
+            .setLabel(listClosed ? 'Открыть запись' : 'Закрыть список')
+            .setStyle(listClosed ? ButtonStyle.Success : ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`event:delete:${eventId}`).setLabel('Удалить МП').setStyle(ButtonStyle.Danger)),
     ];
-    return { embeds: [embed], components };
+    const familyRoleId = options?.announce ? getSetting(guild.id, 'family_role_id') : null;
+    const payload = { embeds: [embed], components };
+    if (familyRoleId) {
+        payload.content = buildEventAnnounceContent(event, familyRoleId);
+        payload.allowedMentions = { roles: [familyRoleId] };
+    }
+    return payload;
 }
 function getEventLists(eventId) {
     const rows = db.prepare('SELECT user_id, list_type, tier FROM event_signups WHERE event_id = ? ORDER BY created_at').all(eventId);
@@ -192,7 +301,7 @@ async function refreshEventMessage(guild, eventId) {
         return;
     }
     const message = await channel.messages.fetch(event.message_id).catch(() => null);
-    await message?.edit(await renderEventMessage(eventId, guild)).catch(() => undefined);
+    await message?.edit(buildEventMessagePayload(eventId, guild)).catch(() => undefined);
 }
 async function dmFamilyAboutEvent(guild, eventId) {
     const familyRoleId = getSetting(guild.id, 'family_role_id');
@@ -210,7 +319,11 @@ async function dmFamilyAboutEvent(guild, eventId) {
         if (!member.roles.cache.has(familyRoleId) || member.user.bot) {
             continue;
         }
-        const ok = await safeDm(member, `Создано мероприятие ${event.type.toUpperCase()}: ${event.map}, ${event.side}, старт ${event.start_time}, войс ${event.voice_time}.`);
+        const typeLabel = getEventTypeLabel(event);
+        const details = event.type === 'kapt'
+            ? `карта **${event.map}**, сторона **${event.side}**`
+            : `тип **${typeLabel}**, игроков **${event.player_count ?? '?'}**, телепорт **${event.teleport_time ?? '—'}**`;
+        const ok = await safeDm(member, `Создано новое МП **${typeLabel}** #${event.id}: ${details}, старт **${event.start_time}**, войс **${event.voice_time}**. Запишись в канале мероприятий.`);
         if (ok) {
             sent += 1;
         }
@@ -242,7 +355,7 @@ async function notifyList(interaction, event, listType) {
         }
     }
     await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `DM списка #${event.id} (${listType}): отправлено ${sent}, не доставлено ${failed}.`);
-    await interaction.reply(privateReply(`Рассылка завершена: отправлено ${sent}, не доставлено ${failed}.`));
+    await interaction.editReply(`Рассылка завершена: отправлено ${sent}, не доставлено ${failed}.`);
 }
 async function dmEventSignups(guild, eventId, content) {
     const rows = db.prepare('SELECT user_id FROM event_signups WHERE event_id = ?').all(eventId);
@@ -257,10 +370,10 @@ async function voiceCheck(interaction, event) {
     if (!interaction.guild) {
         return;
     }
-    const voiceId = event.voice_channel_id ?? getSetting(interaction.guild.id, 'default_voice_channel_id');
+    const voiceId = resolveEventVoiceChannelId(interaction.guild.id, event.voice_channel_id);
     const voice = voiceId ? await interaction.guild.channels.fetch(voiceId).catch(() => null) : null;
     if (!voice || voice.type !== ChannelType.GuildVoice) {
-        await interaction.reply(privateReply('Voice-канал не настроен или не найден.'));
+        await interaction.editReply('Voice-канал не настроен или не найден.');
         return;
     }
     const rows = db.prepare('SELECT user_id, list_type FROM event_signups WHERE event_id = ?').all(event.id);
@@ -274,7 +387,25 @@ async function voiceCheck(interaction, event) {
     }
     const message = missing.length ? `Не были в войсе: ${missing.map((id) => `<@${id}>`).join(', ')}` : 'Все записанные были в войсе.';
     await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `Проверка войса события #${event.id}: ${message}`);
-    await interaction.reply(privateReply(message.slice(0, 1900)));
+    await interaction.editReply(message.slice(0, 1900));
+}
+async function deleteEventMessage(interaction, event) {
+    if (!interaction.guild) {
+        await interaction.editReply('Сервер не найден.');
+        return;
+    }
+    if (event.message_channel_id && event.message_id) {
+        const channel = await interaction.guild.channels.fetch(event.message_channel_id).catch(() => null);
+        if (channel && 'messages' in channel) {
+            const message = await channel.messages.fetch(event.message_id).catch(() => null);
+            await message?.delete().catch(() => undefined);
+        }
+    }
+    db.prepare('UPDATE events SET message_channel_id = NULL, message_id = NULL, updated_at = unixepoch() WHERE id = ?').run(event.id);
+    const summary = formatExport(event.id);
+    await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `МП #${event.id} удалено из канала админом <@${interaction.user.id}>. Сообщение убрано, данные и списки сохранены.\n${summary}`);
+    audit(interaction.guild.id, 'event.message_deleted', { eventId: event.id, summary }, interaction.user.id);
+    await interaction.editReply(`МП #${event.id} удалено из канала. Списки и логи сохранены в базе.`);
 }
 function formatExport(eventId) {
     const lists = getEventLists(eventId);

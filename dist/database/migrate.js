@@ -119,4 +119,19 @@ const migrations = [
 for (const migration of migrations) {
     db.prepare(migration).run();
 }
+const alterMigrations = [
+    'ALTER TABLE events ADD COLUMN list_closed INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE events ADD COLUMN mcl_subtype TEXT',
+    'ALTER TABLE events ADD COLUMN teleport_time TEXT',
+    'ALTER TABLE events ADD COLUMN player_count TEXT',
+    'ALTER TABLE events ADD COLUMN image_url TEXT',
+];
+for (const migration of alterMigrations) {
+    try {
+        db.prepare(migration).run();
+    }
+    catch {
+        // column already exists
+    }
+}
 console.log('Database migrations completed.');

@@ -77,25 +77,39 @@ export const commands = [
         .addUserOption((option) => option.setName('player').setDescription('Игрок.').setRequired(true))
         .addStringOption((option) => option.setName('reason').setDescription('Причина удаления.')),
     new SlashCommandBuilder()
-        .setName('event-create')
-        .setDescription('Создать мероприятие Капт или МЦЛ.')
+        .setName('event-create-capt')
+        .setDescription('Создать мероприятие Капт.')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption((option) => option
-        .setName('type')
-        .setDescription('Тип мероприятия.')
-        .setRequired(true)
-        .addChoices({ name: 'Капт', value: 'kapt' }, { name: 'МЦЛ', value: 'mcl' }))
         .addStringOption((option) => option.setName('start_time').setDescription('Время начала, например 21:00 26.05.2026.').setRequired(true))
         .addStringOption((option) => option.setName('voice_time').setDescription('Время захода в войс, например 20:45 26.05.2026.').setRequired(true))
         .addStringOption((option) => option
         .setName('side')
-        .setDescription('Attack или deff.')
+        .setDescription('Сторона: атака или деф.')
         .setRequired(true)
         .addChoices({ name: 'Attack', value: 'attack' }, { name: 'Deff', value: 'deff' }))
         .addStringOption((option) => option.setName('map').setDescription('Карта.').setRequired(true))
+        .addAttachmentOption((option) => option.setName('photo').setDescription('Фото для сообщения (необязательно).'))
         .addChannelOption((option) => option
         .setName('voice')
-        .setDescription('Voice-канал для проверки присутствия.')
+        .setDescription('Voice для проверки. Если не указан — default_voice_channel_id.')
+        .addChannelTypes(ChannelType.GuildVoice)),
+    new SlashCommandBuilder()
+        .setName('event-create-mcl')
+        .setDescription('Создать мероприятие МЦЛ или ВЗЗ.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addStringOption((option) => option
+        .setName('subtype')
+        .setDescription('Тип: МЦЛ или ВЗЗ.')
+        .setRequired(true)
+        .addChoices({ name: 'МЦЛ', value: 'mcl' }, { name: 'ВЗЗ', value: 'vzz' }))
+        .addStringOption((option) => option.setName('start_time').setDescription('Время начала.').setRequired(true))
+        .addStringOption((option) => option.setName('teleport_time').setDescription('Время телепортации.').setRequired(true))
+        .addStringOption((option) => option.setName('voice_time').setDescription('Время захода в войс.').setRequired(true))
+        .addStringOption((option) => option.setName('player_count').setDescription('Количество игроков, например 15.').setRequired(true))
+        .addAttachmentOption((option) => option.setName('photo').setDescription('Фото для сообщения (необязательно).'))
+        .addChannelOption((option) => option
+        .setName('voice')
+        .setDescription('Voice для проверки. Если не указан — default_voice_channel_id.')
         .addChannelTypes(ChannelType.GuildVoice)),
     new SlashCommandBuilder()
         .setName('attendance')
