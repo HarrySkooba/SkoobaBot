@@ -145,16 +145,20 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
       return true;
     }
 
-    await interaction.deferUpdate();
-
     if (action === 'signup') {
       const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
       if (!member) {
-        await interaction.followUp(privateReply('Не удалось получить участника.'));
+        await interaction.reply(privateReply('Не удалось получить участника.'));
         return true;
       }
 
       const placement = resolvePlacement(member);
+      if (!placement.allowed) {
+        await interaction.reply(privateReply(placement.reason));
+        return true;
+      }
+
+      await interaction.deferUpdate();
       db.prepare(
         `INSERT INTO event_signups (event_id, user_id, list_type, tier)
          VALUES (?, ?, ?, ?)
@@ -167,6 +171,7 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
       return true;
     }
 
+    await interaction.deferUpdate();
     db.prepare('DELETE FROM event_signups WHERE event_id = ? AND user_id = ?').run(eventId, interaction.user.id);
     await refreshEventMessage(interaction.guild, eventId);
     await interaction.followUp(privateReply('Ты удален из списка.'));
@@ -261,17 +266,33 @@ function getEvent(eventId: number, guildId: string): EventRow | null {
   return (db.prepare('SELECT * FROM events WHERE id = ? AND guild_id = ?').get(eventId, guildId) as EventRow | undefined) ?? null;
 }
 
-function resolvePlacement(member: GuildMember): { listType: 'main' | 'reserve'; tier: number | null } {
+type PlacementResult =
+  | { allowed: false; reason: string }
+  | { allowed: true; listType: 'main' | 'reserve'; tier: number | null };
+
+function resolvePlacement(member: GuildMember): PlacementResult {
+  if (!hasConfiguredRole(member, 'family_role_id')) {
+    return { allowed: false, reason: 'Записаться могут только участники с ролью семьи.' };
+  }
+
+  const hasUnverified = hasConfiguredRole(member, 'unverified_role_id');
   const hasVerified = hasConfiguredRole(member, 'verified_role_id');
+  if (!hasUnverified && !hasVerified) {
+    return { allowed: false, reason: 'Нужны роли семьи и Unverified (или Verified после проверки).' };
+  }
+
+  if (hasVerified) {
+    return { allowed: true, listType: 'reserve', tier: null };
+  }
 
   for (const tier of [1, 2, 3] as const) {
     const roleId = getTierRoleId(member.guild.id, tier);
-    if (hasVerified && roleId && member.roles.cache.has(roleId)) {
-      return { listType: 'main', tier };
+    if (roleId && member.roles.cache.has(roleId)) {
+      return { allowed: true, listType: 'main', tier };
     }
   }
 
-  return { listType: 'reserve', tier: null };
+  return { allowed: true, listType: 'reserve', tier: null };
 }
 
 function isEventListClosed(event: EventRow): boolean {

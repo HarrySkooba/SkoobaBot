@@ -82,14 +82,18 @@ export async function handleEventButton(interaction) {
             await interaction.reply(privateReply('Запись на это МП закрыта.'));
             return true;
         }
-        await interaction.deferUpdate();
         if (action === 'signup') {
             const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
             if (!member) {
-                await interaction.followUp(privateReply('Не удалось получить участника.'));
+                await interaction.reply(privateReply('Не удалось получить участника.'));
                 return true;
             }
             const placement = resolvePlacement(member);
+            if (!placement.allowed) {
+                await interaction.reply(privateReply(placement.reason));
+                return true;
+            }
+            await interaction.deferUpdate();
             db.prepare(`INSERT INTO event_signups (event_id, user_id, list_type, tier)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(event_id, user_id) DO UPDATE SET list_type = excluded.list_type, tier = excluded.tier`).run(eventId, interaction.user.id, placement.listType, placement.tier);
@@ -97,6 +101,7 @@ export async function handleEventButton(interaction) {
             await interaction.followUp(privateReply(`Ты записан в ${placement.listType === 'main' ? `основной список, тир ${placement.tier}` : 'запасной список'}.`));
             return true;
         }
+        await interaction.deferUpdate();
         db.prepare('DELETE FROM event_signups WHERE event_id = ? AND user_id = ?').run(eventId, interaction.user.id);
         await refreshEventMessage(interaction.guild, eventId);
         await interaction.followUp(privateReply('Ты удален из списка.'));
@@ -173,14 +178,24 @@ function getEvent(eventId, guildId) {
     return db.prepare('SELECT * FROM events WHERE id = ? AND guild_id = ?').get(eventId, guildId) ?? null;
 }
 function resolvePlacement(member) {
+    if (!hasConfiguredRole(member, 'family_role_id')) {
+        return { allowed: false, reason: 'Записаться могут только участники с ролью семьи.' };
+    }
+    const hasUnverified = hasConfiguredRole(member, 'unverified_role_id');
     const hasVerified = hasConfiguredRole(member, 'verified_role_id');
+    if (!hasUnverified && !hasVerified) {
+        return { allowed: false, reason: 'Нужны роли семьи и Unverified (или Verified после проверки).' };
+    }
+    if (hasVerified) {
+        return { allowed: true, listType: 'reserve', tier: null };
+    }
     for (const tier of [1, 2, 3]) {
         const roleId = getTierRoleId(member.guild.id, tier);
-        if (hasVerified && roleId && member.roles.cache.has(roleId)) {
-            return { listType: 'main', tier };
+        if (roleId && member.roles.cache.has(roleId)) {
+            return { allowed: true, listType: 'main', tier };
         }
     }
-    return { listType: 'reserve', tier: null };
+    return { allowed: true, listType: 'reserve', tier: null };
 }
 function isEventListClosed(event) {
     return Boolean(event.list_closed ?? 0);
