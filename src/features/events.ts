@@ -13,7 +13,7 @@ import {
   TextChannel,
 } from 'discord.js';
 import { db } from '../database/db.js';
-import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRoleId } from '../database/settings.js';
+import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRoleId, type TierNumber } from '../database/settings.js';
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 
 type EventRow = {
@@ -328,18 +328,23 @@ function resolvePlacement(member: GuildMember): PlacementResult {
     return { allowed: false, reason: 'Нужны роли семьи и Unverified (или Verified после проверки).' };
   }
 
-  if (hasVerified) {
-    return { allowed: true, listType: 'reserve', tier: null };
-  }
-
-  for (const tier of [1, 2, 3] as const) {
-    const roleId = getTierRoleId(member.guild.id, tier);
-    if (roleId && member.roles.cache.has(roleId)) {
-      return { allowed: true, listType: 'main', tier };
-    }
+  const tier = getMemberTier(member);
+  if (tier) {
+    return { allowed: true, listType: 'main', tier };
   }
 
   return { allowed: true, listType: 'reserve', tier: null };
+}
+
+function getMemberTier(member: GuildMember): TierNumber | null {
+  for (const tier of [1, 2, 3] as const) {
+    const roleId = getTierRoleId(member.guild.id, tier);
+    if (roleId && member.roles.cache.has(roleId)) {
+      return tier;
+    }
+  }
+
+  return null;
 }
 
 function isEventListClosed(event: EventRow): boolean {

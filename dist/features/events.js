@@ -219,16 +219,20 @@ function resolvePlacement(member) {
     if (!hasUnverified && !hasVerified) {
         return { allowed: false, reason: 'Нужны роли семьи и Unverified (или Verified после проверки).' };
     }
-    if (hasVerified) {
-        return { allowed: true, listType: 'reserve', tier: null };
+    const tier = getMemberTier(member);
+    if (tier) {
+        return { allowed: true, listType: 'main', tier };
     }
+    return { allowed: true, listType: 'reserve', tier: null };
+}
+function getMemberTier(member) {
     for (const tier of [1, 2, 3]) {
         const roleId = getTierRoleId(member.guild.id, tier);
         if (roleId && member.roles.cache.has(roleId)) {
-            return { allowed: true, listType: 'main', tier };
+            return tier;
         }
     }
-    return { allowed: true, listType: 'reserve', tier: null };
+    return null;
 }
 function isEventListClosed(event) {
     return Boolean(event.list_closed ?? 0);
