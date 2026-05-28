@@ -4,44 +4,53 @@ import { getEventLogChannelKey, getEventPublishChannelKey, getSetting, getTierRo
 import { audit, getConfiguredTextChannel, hasAdminRole, hasConfiguredRole, privateReply, safeDm, sendToConfiguredChannel } from '../discord/helpers.js';
 export async function handleEventCommand(interaction) {
     if (interaction.commandName === 'event-create-capt' || interaction.commandName === 'event-create-mcl') {
-        const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
-        if (!member || !hasAdminRole(member)) {
-            await interaction.reply(privateReply('Создавать мероприятия могут только участники с admin_role_id.'));
-            return true;
-        }
         if (!interaction.guild) {
             await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
             return true;
         }
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const input = interaction.commandName === 'event-create-capt'
-            ? {
-                type: 'kapt',
-                startTime: interaction.options.getString('start_time', true),
-                voiceTime: interaction.options.getString('voice_time', true),
-                side: interaction.options.getString('side', true),
-                map: interaction.options.getString('map', true),
-                voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, interaction.options.getChannel('voice')?.id ?? null),
-                imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
-            }
-            : {
-                type: 'mcl',
-                startTime: interaction.options.getString('start_time', true),
-                voiceTime: interaction.options.getString('voice_time', true),
-                side: '—',
-                map: '—',
-                voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, interaction.options.getChannel('voice')?.id ?? null),
-                imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
-                mclSubtype: interaction.options.getString('subtype', true),
-                teleportTime: interaction.options.getString('teleport_time', true),
-                playerCount: interaction.options.getString('player_count', true),
-            };
-        const eventId = await createAndPublishEvent(interaction.guild, interaction.user.id, input);
-        if (!eventId) {
-            await interaction.editReply('Не найден канал для публикации мероприятия.');
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+        if (!member || !hasAdminRole(member)) {
+            await interaction.editReply('Создавать мероприятия могут только участники с admin_role_id.');
             return true;
         }
-        await interaction.editReply(`Мероприятие #${eventId} создано.`);
+        try {
+            const voiceChannel = interaction.options.getChannel('voice');
+            const selectedVoiceId = voiceChannel?.type === ChannelType.GuildVoice ? voiceChannel.id : null;
+            const input = interaction.commandName === 'event-create-capt'
+                ? {
+                    type: 'kapt',
+                    startTime: interaction.options.getString('start_time', true),
+                    voiceTime: interaction.options.getString('voice_time', true),
+                    side: interaction.options.getString('side', true),
+                    map: interaction.options.getString('map', true),
+                    voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, selectedVoiceId),
+                    imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+                }
+                : {
+                    type: 'mcl',
+                    startTime: interaction.options.getString('start_time', true),
+                    voiceTime: interaction.options.getString('voice_time', true),
+                    side: '-',
+                    map: '-',
+                    voiceChannelId: resolveEventVoiceChannelId(interaction.guild.id, selectedVoiceId),
+                    imageUrl: interaction.options.getAttachment('photo')?.url ?? null,
+                    mclSubtype: interaction.options.getString('subtype', true),
+                    teleportTime: interaction.options.getString('teleport_time', true),
+                    playerCount: interaction.options.getString('player_count', true),
+                };
+            const published = await createAndPublishEvent(interaction.guild, interaction.user.id, input);
+            if (!published) {
+                await interaction.editReply(`Не удалось опубликовать мероприятие. Проверь канал ${input.type === 'kapt' ? 'event_capt_channel_id' : 'event_mcl_channel_id'} и права бота.`);
+                return true;
+            }
+            await interaction.editReply(`Мероприятие #${published.eventId} создано: ${published.messageUrl}`);
+        }
+        catch (error) {
+            console.error('event-create failed:', error);
+            const reason = error instanceof Error ? error.message : 'неизвестная ошибка';
+            await interaction.editReply(`Не удалось создать мероприятие: ${reason.slice(0, 1800)}`);
+        }
         return true;
     }
     if (interaction.commandName === 'attendance') {
@@ -248,11 +257,26 @@ async function createAndPublishEvent(guild, createdBy, input) {
     if (!channel) {
         return null;
     }
-    const message = await channel.send(buildEventMessagePayload(eventId, guild, { announce: true }));
+    const message = await sendEventMessage(channel, eventId, guild, { announce: true });
     db.prepare('UPDATE events SET message_channel_id = ?, message_id = ? WHERE id = ?').run(channel.id, message.id, eventId);
-    await dmFamilyAboutEvent(guild, eventId);
     audit(guild.id, 'event.created', { eventId, ...input }, createdBy);
-    return eventId;
+    void dmFamilyAboutEvent(guild, eventId).catch((error) => console.error('dmFamilyAboutEvent failed:', error));
+    return { eventId, messageUrl: message.url };
+}
+async function sendEventMessage(channel, eventId, guild, options) {
+    const payload = buildEventMessagePayload(eventId, guild, options);
+    try {
+        return await channel.send(payload);
+    }
+    catch (error) {
+        const event = getEvent(eventId, guild.id);
+        if (!event?.image_url) {
+            throw error;
+        }
+        db.prepare('UPDATE events SET image_url = NULL WHERE id = ?').run(eventId);
+        const fallbackPayload = buildEventMessagePayload(eventId, guild, options);
+        return await channel.send(fallbackPayload);
+    }
 }
 function buildEventMessagePayload(eventId, guild, options) {
     const event = getEvent(eventId, guild.id);
@@ -327,18 +351,22 @@ async function dmFamilyAboutEvent(guild, eventId) {
     if (!event) {
         return;
     }
-    const members = await guild.members.fetch();
+    const familyRole = await guild.roles.fetch(familyRoleId).catch(() => null);
+    if (!familyRole) {
+        return;
+    }
     let sent = 0;
     let failed = 0;
-    for (const member of members.values()) {
-        if (!member.roles.cache.has(familyRoleId) || member.user.bot) {
+    const typeLabel = getEventTypeLabel(event);
+    const details = event.type === 'kapt'
+        ? `карта **${event.map}**, сторона **${event.side}**`
+        : `тип **${typeLabel}**, игроков **${event.player_count ?? '?'}**, телепорт **${event.teleport_time ?? '-'}**`;
+    const dmText = `Создано новое МП **${typeLabel}** #${event.id}: ${details}, старт **${event.start_time}**, войс **${event.voice_time}**. Запишись в канале мероприятий.`;
+    for (const [, member] of familyRole.members) {
+        if (member.user.bot) {
             continue;
         }
-        const typeLabel = getEventTypeLabel(event);
-        const details = event.type === 'kapt'
-            ? `карта **${event.map}**, сторона **${event.side}**`
-            : `тип **${typeLabel}**, игроков **${event.player_count ?? '?'}**, телепорт **${event.teleport_time ?? '—'}**`;
-        const ok = await safeDm(member, `Создано новое МП **${typeLabel}** #${event.id}: ${details}, старт **${event.start_time}**, войс **${event.voice_time}**. Запишись в канале мероприятий.`);
+        const ok = await safeDm(member, dmText);
         if (ok) {
             sent += 1;
         }
