@@ -143,28 +143,36 @@ function buildProfileChannelOverwrites(guild, ownerUserId) {
     ];
     const mentorRoleId = getSetting(guild.id, 'mentor_role_id');
     const adminRoleId = getSetting(guild.id, 'admin_role_id');
-    return [
+    const overwrites = [
         { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
         {
             id: ownerUserId,
             allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages],
         },
-        ...(mentorRoleId
-            ? [{ id: mentorRoleId, allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages] }]
-            : []),
-        ...(adminRoleId
-            ? [
-                {
-                    id: adminRoleId,
-                    allow: [
-                        ...viewAndHistory,
-                        PermissionsBitField.Flags.SendMessages,
-                        PermissionsBitField.Flags.ManageChannels,
-                    ],
-                },
-            ]
-            : []),
     ];
+    for (const tier of [1, 2, 3]) {
+        const tierRoleId = getTierRoleId(guild.id, tier);
+        if (tierRoleId) {
+            overwrites.push({ id: tierRoleId, deny: [PermissionsBitField.Flags.ViewChannel] });
+        }
+    }
+    if (mentorRoleId) {
+        overwrites.push({ id: mentorRoleId, allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages] });
+    }
+    if (adminRoleId) {
+        overwrites.push({
+            id: adminRoleId,
+            allow: [
+                ...viewAndHistory,
+                PermissionsBitField.Flags.SendMessages,
+                PermissionsBitField.Flags.ManageChannels,
+            ],
+        });
+    }
+    return overwrites;
+}
+async function applyProfileChannelPermissions(channel, guild, ownerUserId) {
+    await channel.permissionOverwrites.set(buildProfileChannelOverwrites(guild, ownerUserId));
 }
 async function createProfileChannel(interaction) {
     if (!interaction.guild) {
@@ -257,8 +265,11 @@ async function changeProfileTier(interaction, userId, newTier, reason) {
     const oldTier = profile.tier;
     const channel = await interaction.guild.channels.fetch(profile.channel_id).catch(() => null);
     const categoryId = getTierCategoryId(interaction.guild.id, newTier);
-    if (channel?.type === ChannelType.GuildText && categoryId) {
-        await channel.setParent(categoryId).catch(() => undefined);
+    if (channel?.type === ChannelType.GuildText) {
+        if (categoryId) {
+            await channel.setParent(categoryId, { lockPermissions: false }).catch(() => undefined);
+        }
+        await applyProfileChannelPermissions(channel, interaction.guild, userId).catch(() => undefined);
     }
     await syncMemberTierRoles(interaction.guild, userId, newTier);
     db.prepare('UPDATE player_profiles SET tier = ?, updated_at = unixepoch() WHERE id = ?').run(newTier, profile.id);

@@ -6,7 +6,10 @@ import {
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  Guild,
+  OverwriteResolvable,
   PermissionsBitField,
+  TextChannel,
 } from 'discord.js';
 import { db } from '../database/db.js';
 import { getSetting, getTierCategoryId, getTierRoleId } from '../database/settings.js';
@@ -173,39 +176,48 @@ async function syncMemberTierRoles(guild: import('discord.js').Guild, userId: st
   }
 }
 
-function buildProfileChannelOverwrites(
-  guild: import('discord.js').Guild,
-  ownerUserId: string,
-): Array<{ id: string; allow?: bigint[]; deny?: bigint[] }> {
+function buildProfileChannelOverwrites(guild: Guild, ownerUserId: string): OverwriteResolvable[] {
   const viewAndHistory = [
     PermissionsBitField.Flags.ViewChannel,
     PermissionsBitField.Flags.ReadMessageHistory,
   ] as const;
   const mentorRoleId = getSetting(guild.id, 'mentor_role_id');
   const adminRoleId = getSetting(guild.id, 'admin_role_id');
-
-  return [
+  const overwrites: OverwriteResolvable[] = [
     { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
     {
       id: ownerUserId,
       allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages],
     },
-    ...(mentorRoleId
-      ? [{ id: mentorRoleId, allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages] }]
-      : []),
-    ...(adminRoleId
-      ? [
-          {
-            id: adminRoleId,
-            allow: [
-              ...viewAndHistory,
-              PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.ManageChannels,
-            ],
-          },
-        ]
-      : []),
   ];
+
+  for (const tier of [1, 2, 3] as const) {
+    const tierRoleId = getTierRoleId(guild.id, tier);
+    if (tierRoleId) {
+      overwrites.push({ id: tierRoleId, deny: [PermissionsBitField.Flags.ViewChannel] });
+    }
+  }
+
+  if (mentorRoleId) {
+    overwrites.push({ id: mentorRoleId, allow: [...viewAndHistory, PermissionsBitField.Flags.SendMessages] });
+  }
+
+  if (adminRoleId) {
+    overwrites.push({
+      id: adminRoleId,
+      allow: [
+        ...viewAndHistory,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ManageChannels,
+      ],
+    });
+  }
+
+  return overwrites;
+}
+
+async function applyProfileChannelPermissions(channel: TextChannel, guild: Guild, ownerUserId: string): Promise<void> {
+  await channel.permissionOverwrites.set(buildProfileChannelOverwrites(guild, ownerUserId));
 }
 
 async function createProfileChannel(interaction: ButtonInteraction) {
@@ -333,8 +345,11 @@ async function changeProfileTier(interaction: ChatInputCommandInteraction | Butt
   const oldTier = profile.tier;
   const channel = await interaction.guild.channels.fetch(profile.channel_id).catch(() => null);
   const categoryId = getTierCategoryId(interaction.guild.id, newTier as 1 | 2 | 3);
-  if (channel?.type === ChannelType.GuildText && categoryId) {
-    await channel.setParent(categoryId).catch(() => undefined);
+  if (channel?.type === ChannelType.GuildText) {
+    if (categoryId) {
+      await channel.setParent(categoryId, { lockPermissions: false }).catch(() => undefined);
+    }
+    await applyProfileChannelPermissions(channel, interaction.guild, userId).catch(() => undefined);
   }
 
   await syncMemberTierRoles(interaction.guild, userId, newTier as 1 | 2 | 3);
