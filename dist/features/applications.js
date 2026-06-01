@@ -101,8 +101,14 @@ export async function handleApplicationButton(interaction) {
         await interaction.showModal(modal);
         return true;
     }
-    if (action === 'accept' || action === 'reject') {
-        await resolveApplication(interaction, applicationId, action);
+    if (action === 'reject') {
+        const modal = new ModalBuilder().setCustomId(`application-reject:${applicationId}`).setTitle('Отклонить заявку');
+        modal.addComponents(inputRow('reason', 'Причина отказа', TextInputStyle.Paragraph));
+        await interaction.showModal(modal);
+        return true;
+    }
+    if (action === 'accept') {
+        await resolveApplication(interaction, applicationId, 'accept');
         return true;
     }
     return true;
@@ -159,6 +165,36 @@ export async function handleApplicationModal(interaction) {
         await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: обзвон назначен модератором <@${interaction.user.id}> на ${scheduledFor}.`);
         await notifyApplicationUser(interaction.guild, applicationId, `Тебе назначен обзвон: ${scheduledFor}${notes ? `\nКомментарий: ${notes}` : ''}`);
         await interaction.editReply('Обзвон назначен. Сообщение заявки обновлено.');
+        return true;
+    }
+    if (interaction.customId.startsWith('application-reject:')) {
+        if (!interaction.guild) {
+            await interaction.reply(privateReply('Заявки работают только на сервере.'));
+            return true;
+        }
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+        if (!member || !isStaff(member)) {
+            await interaction.reply(privateReply('Отклонять заявки могут только стафф.'));
+            return true;
+        }
+        const applicationId = Number(interaction.customId.split(':')[1]);
+        const application = getApplication(interaction.guild.id, applicationId);
+        if (!application) {
+            await interaction.reply(privateReply('Заявка не найдена.'));
+            return true;
+        }
+        if (application.status === 'accepted' || application.status === 'rejected') {
+            await interaction.reply(privateReply('Заявка уже закрыта.'));
+            return true;
+        }
+        const reason = interaction.fields.getTextInputValue('reason').trim();
+        if (!reason) {
+            await interaction.reply(privateReply('Укажи причину отказа.'));
+            return true;
+        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await resolveApplication(interaction, applicationId, 'reject', reason);
+        await interaction.editReply('Заявка отклонена. Сообщение обновлено.');
         return true;
     }
     return false;
@@ -249,6 +285,9 @@ function buildApplicationEmbed(application, answers, options) {
     if (schedule?.notes) {
         embed.addFields({ name: 'Комментарий к обзвону', value: truncateEmbedField(schedule.notes, 256) });
     }
+    if (status === 'rejected' && application.reject_reason) {
+        embed.addFields({ name: 'Причина отказа', value: truncateEmbedField(application.reject_reason, 1024) });
+    }
     embed
         .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity ?? '—') }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience ?? '—') }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families ?? '—') }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source ?? '—') }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks ?? '—') });
     return embed;
@@ -327,18 +366,26 @@ async function refreshReviewMessage(guild, applicationId) {
         components: isClosed ? [] : [reviewButtons(applicationId)],
     });
 }
-async function resolveApplication(interaction, applicationId, action) {
+async function resolveApplication(interaction, applicationId, action, rejectReason) {
     if (!interaction.guild) {
-        await interaction.reply(privateReply('Сервер не найден.'));
+        if (interaction.isButton()) {
+            await interaction.reply(privateReply('Сервер не найден.'));
+        }
         return;
     }
-    await interaction.deferUpdate();
+    if (interaction.isButton()) {
+        await interaction.deferUpdate();
+    }
     const application = getApplication(interaction.guild.id, applicationId);
     if (!application) {
-        await interaction.followUp(privateReply('Заявка не найдена.'));
+        if (interaction.isButton()) {
+            await interaction.followUp(privateReply('Заявка не найдена.'));
+        }
         return;
     }
-    db.prepare('UPDATE applications SET status = ?, reviewer_id = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'accept' ? 'accepted' : 'rejected', interaction.user.id, applicationId);
+    db.prepare(`UPDATE applications
+     SET status = ?, reviewer_id = ?, reject_reason = ?, updated_at = unixepoch()
+     WHERE id = ?`).run(action === 'accept' ? 'accepted' : 'rejected', interaction.user.id, action === 'reject' ? (rejectReason ?? null) : null, applicationId);
     if (action === 'accept') {
         const member = await interaction.guild.members.fetch(application.user_id).catch(() => null);
         if (member) {
@@ -347,10 +394,26 @@ async function resolveApplication(interaction, applicationId, action) {
     }
     const answers = parseAnswers(application.answers_json);
     const updatedApplication = getApplication(interaction.guild.id, applicationId);
-    audit(interaction.guild.id, `application.${action}`, { applicationId }, interaction.user.id, application.user_id);
-    await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: ${action === 'accept' ? 'принята' : 'отклонена'} модератором <@${interaction.user.id}>.`);
-    await notifyApplicationUser(interaction.guild, applicationId, action === 'accept' ? 'Твоя заявка в Skooba принята.' : 'Твоя заявка в Skooba отклонена.');
-    if (interaction.message) {
+    audit(interaction.guild.id, `application.${action}`, { applicationId, rejectReason }, interaction.user.id, application.user_id);
+    await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: ${action === 'accept' ? 'принята' : 'отклонена'} модератором <@${interaction.user.id}>.${rejectReason ? ` Причина: ${rejectReason}` : ''}`);
+    await notifyApplicationUser(interaction.guild, applicationId, action === 'accept' ? 'Твоя заявка в Skooba принята.' : `Твоя заявка в Skooba отклонена.${rejectReason ? `\nПричина: ${rejectReason}` : ''}`);
+    const reviewMessageId = application.review_message_id;
+    if (reviewMessageId) {
+        const channel = await getConfiguredTextChannel(interaction.guild, 'application_review_channel_id');
+        const message = channel ? await channel.messages.fetch(reviewMessageId).catch(() => null) : null;
+        await message
+            ?.edit({
+            embeds: [
+                buildApplicationEmbed(updatedApplication, answers, {
+                    resolvedById: interaction.user.id,
+                    resolvedAction: action,
+                }),
+            ],
+            components: [],
+        })
+            .catch(() => undefined);
+    }
+    else if (interaction.isButton() && interaction.message) {
         await interaction.message
             .edit({
             embeds: [

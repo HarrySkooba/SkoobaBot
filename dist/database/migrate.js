@@ -126,6 +126,7 @@ const alterMigrations = [
     'ALTER TABLE events ADD COLUMN player_count TEXT',
     'ALTER TABLE events ADD COLUMN image_url TEXT',
     'ALTER TABLE event_signups ADD COLUMN promoted_from_reserve INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE applications ADD COLUMN reject_reason TEXT',
 ];
 for (const migration of alterMigrations) {
     try {
