@@ -2,7 +2,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags, Partials } from 'disco
 import './database/migrate.js';
 import { env } from './env.js';
 import { handleApplicationButton, handleApplicationCommand, handleApplicationModal } from './features/applications.js';
-import { handleCheatButton, handleCheatCommand } from './features/cheatChecks.js';
+import { handleCheatButton, handleCheatCommand, handleCheatModal } from './features/cheatChecks.js';
 import { handleEventButton, handleEventCommand, startReminderScheduler } from './features/events.js';
 import { handleProfileButton, handleProfileCommand } from './features/playerProfiles.js';
 import { handleRoleRecoveryButton, handleRoleRecoveryCommand } from './features/roleRecovery.js';
@@ -54,6 +54,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.isModalSubmit()) {
       if (await handleApplicationModal(interaction)) return;
+      if (await handleCheatModal(interaction)) return;
       await interaction.reply({ content: 'Форма пока не обработана.', flags: MessageFlags.Ephemeral });
     }
   } catch (error) {
