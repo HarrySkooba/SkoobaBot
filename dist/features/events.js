@@ -6,7 +6,7 @@ const CAPT_SIDE_LABELS = {
     attack: 'Атака',
     deff: 'Деф',
 };
-const MAIN_LIST_MAX_SLOTS = 35;
+const DEFAULT_MAIN_LIST_SLOTS = 35;
 const TIER_LIST_EMOJIS = {
     1: '1️⃣',
     2: '2️⃣',
@@ -136,10 +136,11 @@ export async function handleEventButton(interaction) {
             let listType = placement.listType;
             let tier = placement.tier;
             let overflowNote = '';
-            if (listType === 'main' && countMainSignups(eventId) >= MAIN_LIST_MAX_SLOTS) {
+            const mainListMax = getMainListMaxSlots(event);
+            if (listType === 'main' && countMainSignups(eventId) >= mainListMax) {
                 listType = 'reserve';
                 tier = null;
-                overflowNote = ' Основной список заполнен (35/35), ты записан в запас.';
+                overflowNote = ` Основной список заполнен (${mainListMax}/${mainListMax}), ты записан в запас.`;
             }
             await interaction.deferUpdate();
             db.prepare(`INSERT INTO event_signups (event_id, user_id, list_type, tier, promoted_from_reserve)
@@ -175,7 +176,7 @@ export async function handleEventButton(interaction) {
         return true;
     }
     if (action === 'export') {
-        await interaction.reply(privateReply(formatExport(eventId)));
+        await interaction.reply(privateReply(formatExport(event)));
         return true;
     }
     if (action === 'close-list') {
@@ -197,10 +198,17 @@ export async function handleEventButton(interaction) {
         await showPromoteReserveMenu(interaction, event);
         return true;
     }
+    if (action === 'demote-main') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        await showDemoteMainMenu(interaction, event);
+        return true;
+    }
     return true;
 }
 export async function handleEventSelect(interaction) {
-    if (!interaction.customId.startsWith('event:promote-pick:')) {
+    const isPromotePick = interaction.customId.startsWith('event:promote-pick:');
+    const isDemotePick = interaction.customId.startsWith('event:demote-pick:');
+    if (!isPromotePick && !isDemotePick) {
         return false;
     }
     if (!interaction.guild) {
@@ -209,7 +217,7 @@ export async function handleEventSelect(interaction) {
     }
     const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!member || !hasAdminRole(member)) {
-        await interaction.reply(privateReply('Переносить игроков могут только участники с admin_role_id.'));
+        await interaction.reply(privateReply('Перемещать игроков между списками могут только участники с admin_role_id.'));
         return true;
     }
     const eventId = Number(interaction.customId.split(':')[2]);
@@ -224,7 +232,9 @@ export async function handleEventSelect(interaction) {
     }
     const userId = interaction.values[0];
     await interaction.deferUpdate();
-    const result = await promoteReserveToMain(interaction.guild, eventId, userId, interaction.user.id);
+    const result = isPromotePick
+        ? await promoteReserveToMain(interaction.guild, event, userId, interaction.user.id)
+        : await demoteMainToReserve(interaction.guild, event, userId, interaction.user.id);
     if (!result.ok) {
         await interaction.followUp(privateReply(result.message));
         return true;
@@ -372,13 +382,14 @@ function buildEventMessagePayload(eventId, guild, options) {
     if (!event) {
         throw new Error(`Event ${eventId} not found`);
     }
-    const lists = getEventLists(eventId);
+    const mainListMax = getMainListMaxSlots(event);
+    const lists = getEventLists(eventId, event);
     const listClosed = isEventListClosed(event);
     const typeLabel = getEventTypeLabel(event);
     const embed = new EmbedBuilder()
         .setTitle(`${typeLabel} #${event.id}`)
         .setDescription(buildEventDescription(event))
-        .addFields({ name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' }, { name: `Основной список (${lists.main.length}/${MAIN_LIST_MAX_SLOTS})`, value: formatMainList(lists.main), inline: false }, { name: `Запасной (${lists.reserve.length})`, value: formatReserveList(lists.reserve), inline: false })
+        .addFields({ name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' }, { name: `Основной список (${lists.main.length}/${mainListMax})`, value: formatMainList(lists.main), inline: false }, { name: `Запасной (${lists.reserve.length})`, value: formatReserveList(lists.reserve), inline: false })
         .setColor(event.type === 'kapt' ? 0xed4245 : 0x5865f2);
     if (event.image_url) {
         embed.setImage(event.image_url);
@@ -396,8 +407,12 @@ function buildEventMessagePayload(eventId, guild, options) {
         new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`event:notify-main:${eventId}`).setLabel('Уведомить основной').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`event:notify-reserve:${eventId}`).setLabel('Уведомить запас').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`event:voice-check:${eventId}`).setLabel('Проверить войс').setStyle(ButtonStyle.Danger)),
         new ActionRowBuilder().addComponents(new ButtonBuilder()
             .setCustomId(`event:promote-reserve:${eventId}`)
-            .setLabel('Из запаса в основной')
+            .setLabel('Запас → основной')
             .setStyle(ButtonStyle.Primary)
+            .setDisabled(listClosed), new ButtonBuilder()
+            .setCustomId(`event:demote-main:${eventId}`)
+            .setLabel('Основной → запас')
+            .setStyle(ButtonStyle.Secondary)
             .setDisabled(listClosed), new ButtonBuilder()
             .setCustomId(`event:close-list:${eventId}`)
             .setLabel(listClosed ? 'Открыть запись' : 'Закрыть список')
@@ -417,10 +432,25 @@ function getEventSignupRows(eventId) {
        FROM event_signups WHERE event_id = ?`)
         .all(eventId);
 }
+function getMainListMaxSlots(event) {
+    if (event.type === 'mcl' && event.player_count) {
+        const match = event.player_count.match(/\d+/);
+        const parsed = match ? Number(match[0]) : Number.NaN;
+        if (!Number.isNaN(parsed) && parsed > 0) {
+            return Math.min(parsed, 99);
+        }
+    }
+    return DEFAULT_MAIN_LIST_SLOTS;
+}
 function sortMainSignupRows(rows) {
     return rows
-        .filter((row) => row.list_type === 'main' && row.tier !== null)
+        .filter((row) => row.list_type === 'main' && (row.tier !== null || row.promoted_from_reserve))
         .sort((left, right) => {
+        const leftNoTierPromoted = Boolean(left.promoted_from_reserve) && left.tier === null;
+        const rightNoTierPromoted = Boolean(right.promoted_from_reserve) && right.tier === null;
+        if (leftNoTierPromoted !== rightNoTierPromoted) {
+            return leftNoTierPromoted ? 1 : -1;
+        }
         const tierDiff = (left.tier ?? 99) - (right.tier ?? 99);
         if (tierDiff !== 0) {
             return tierDiff;
@@ -431,9 +461,10 @@ function sortMainSignupRows(rows) {
 function countMainSignups(eventId) {
     return sortMainSignupRows(getEventSignupRows(eventId)).length;
 }
-function getEventLists(eventId) {
+function getEventLists(eventId, event) {
+    const mainListMax = getMainListMaxSlots(event);
     const rows = getEventSignupRows(eventId);
-    const main = sortMainSignupRows(rows).slice(0, MAIN_LIST_MAX_SLOTS).map((row) => ({
+    const main = sortMainSignupRows(rows).slice(0, mainListMax).map((row) => ({
         userId: row.user_id,
         tier: row.tier,
         promotedFromReserve: Boolean(row.promoted_from_reserve),
@@ -445,7 +476,11 @@ function getEventLists(eventId) {
     return { main, reserve };
 }
 function formatMainListLine(position, entry) {
-    const emoji = entry.promotedFromReserve ? PROMOTED_FROM_RESERVE_EMOJI : TIER_LIST_EMOJIS[entry.tier];
+    const emoji = entry.promotedFromReserve
+        ? PROMOTED_FROM_RESERVE_EMOJI
+        : entry.tier
+            ? TIER_LIST_EMOJIS[entry.tier]
+            : '—';
     return `${position}. <@${entry.userId}> ${emoji}`;
 }
 function formatMainList(entries) {
@@ -464,13 +499,14 @@ async function showPromoteReserveMenu(interaction, event) {
     if (!interaction.guild) {
         return;
     }
-    const lists = getEventLists(event.id);
+    const mainListMax = getMainListMaxSlots(event);
+    const lists = getEventLists(event.id, event);
     if (!lists.reserve.length) {
         await interaction.editReply('В запасном списке никого нет.');
         return;
     }
-    if (lists.main.length >= MAIN_LIST_MAX_SLOTS) {
-        await interaction.editReply(`Основной список уже заполнен (${MAIN_LIST_MAX_SLOTS}/${MAIN_LIST_MAX_SLOTS}).`);
+    if (lists.main.length >= mainListMax) {
+        await interaction.editReply(`Основной список уже заполнен (${mainListMax}/${mainListMax}).`);
         return;
     }
     const options = await Promise.all(lists.reserve.slice(0, 25).map(async (userId, index) => {
@@ -486,33 +522,73 @@ async function showPromoteReserveMenu(interaction, event) {
         .setPlaceholder('Выбери игрока из запаса')
         .addOptions(options);
     await interaction.editReply({
-        content: `Перенос в основной список (${lists.main.length}/${MAIN_LIST_MAX_SLOTS}). Выбери игрока:`,
+        content: `Перенос в основной список (${lists.main.length}/${mainListMax}). Выбери игрока:`,
         components: [new ActionRowBuilder().addComponents(select)],
     });
 }
-async function promoteReserveToMain(guild, eventId, userId, adminId) {
+async function promoteReserveToMain(guild, event, userId, adminId) {
+    const mainListMax = getMainListMaxSlots(event);
     const signup = db
         .prepare('SELECT list_type FROM event_signups WHERE event_id = ? AND user_id = ?')
-        .get(eventId, userId);
+        .get(event.id, userId);
     if (!signup || signup.list_type !== 'reserve') {
         return { ok: false, message: 'Игрок не найден в запасном списке.' };
     }
-    if (countMainSignups(eventId) >= MAIN_LIST_MAX_SLOTS) {
-        return { ok: false, message: `Основной список уже заполнен (${MAIN_LIST_MAX_SLOTS}/${MAIN_LIST_MAX_SLOTS}).` };
+    if (countMainSignups(event.id) >= mainListMax) {
+        return { ok: false, message: `Основной список уже заполнен (${mainListMax}/${mainListMax}).` };
     }
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) {
         return { ok: false, message: 'Не удалось найти участника на сервере.' };
     }
     const tier = getMemberTier(member);
-    if (!tier) {
-        return { ok: false, message: 'В основной список можно переносить только игроков с ролью тира.' };
-    }
     db.prepare(`UPDATE event_signups
      SET list_type = 'main', tier = ?, promoted_from_reserve = 1
-     WHERE event_id = ? AND user_id = ?`).run(tier, eventId, userId);
-    audit(guild.id, 'event.promoted_from_reserve', { eventId, userId, tier }, adminId, userId);
-    return { ok: true, message: `<@${userId}> перенесен в основной список ${PROMOTED_FROM_RESERVE_EMOJI} (тир ${tier}).` };
+     WHERE event_id = ? AND user_id = ?`).run(tier, event.id, userId);
+    audit(guild.id, 'event.promoted_from_reserve', { eventId: event.id, userId, tier, promotedFromReserve: true }, adminId, userId);
+    const tierNote = tier ? ` (тир ${tier}, в списке ${PROMOTED_FROM_RESERVE_EMOJI})` : ` ${PROMOTED_FROM_RESERVE_EMOJI}`;
+    return { ok: true, message: `<@${userId}> перенесен в основной список${tierNote}.` };
+}
+async function showDemoteMainMenu(interaction, event) {
+    if (!interaction.guild) {
+        return;
+    }
+    const lists = getEventLists(event.id, event);
+    if (!lists.main.length) {
+        await interaction.editReply('В основном списке никого нет.');
+        return;
+    }
+    const options = await Promise.all(lists.main.slice(0, 25).map(async (entry, index) => {
+        const player = await interaction.guild.members.fetch(entry.userId).catch(() => null);
+        const place = index + 1;
+        const marker = entry.promotedFromReserve ? PROMOTED_FROM_RESERVE_EMOJI : entry.tier ? TIER_LIST_EMOJIS[entry.tier] : '';
+        return {
+            label: `${place}. ${(player?.displayName ?? entry.userId).slice(0, 80)}`,
+            description: `Убрать в запас ${marker}`.trim().slice(0, 100),
+            value: entry.userId,
+        };
+    }));
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`event:demote-pick:${event.id}`)
+        .setPlaceholder('Кого убрать в запас')
+        .addOptions(options);
+    await interaction.editReply({
+        content: `Убрать из основного списка (${lists.main.length} чел.). Выбери игрока:`,
+        components: [new ActionRowBuilder().addComponents(select)],
+    });
+}
+async function demoteMainToReserve(guild, event, userId, adminId) {
+    const signup = db
+        .prepare('SELECT list_type FROM event_signups WHERE event_id = ? AND user_id = ?')
+        .get(event.id, userId);
+    if (!signup || signup.list_type !== 'main') {
+        return { ok: false, message: 'Игрок не найден в основном списке.' };
+    }
+    db.prepare(`UPDATE event_signups
+     SET list_type = 'reserve', tier = NULL, promoted_from_reserve = 0
+     WHERE event_id = ? AND user_id = ?`).run(event.id, userId);
+    audit(guild.id, 'event.demoted_to_reserve', { eventId: event.id, userId }, adminId, userId);
+    return { ok: true, message: `<@${userId}> перенесен в запасной список.` };
 }
 async function refreshEventMessage(guild, eventId) {
     const event = getEvent(eventId, guild.id);
@@ -629,20 +705,21 @@ async function deleteEventMessage(interaction, event) {
         }
     }
     db.prepare('UPDATE events SET message_channel_id = NULL, message_id = NULL, updated_at = unixepoch() WHERE id = ?').run(event.id);
-    const summary = formatExport(event.id);
+    const summary = formatExport(event);
     await sendToConfiguredChannel(interaction.guild, getEventLogChannelKey(event.type), `МП #${event.id} удалено из канала админом <@${interaction.user.id}>. Сообщение убрано, данные и списки сохранены.\n${summary}`);
     audit(interaction.guild.id, 'event.message_deleted', { eventId: event.id, summary }, interaction.user.id);
     await interaction.editReply(`МП #${event.id} удалено из канала. Списки и логи сохранены в базе.`);
 }
-function formatExport(eventId) {
-    const lists = getEventLists(eventId);
+function formatExport(event) {
+    const mainListMax = getMainListMaxSlots(event);
+    const lists = getEventLists(event.id, event);
     const mainLines = lists.main.length
         ? lists.main.map((entry, index) => formatMainListLine(index + 1, entry)).join('\n')
         : '-';
     const reserveLines = lists.reserve.length
         ? lists.reserve.map((userId, index) => `${index + 1}. <@${userId}>`).join('\n')
         : '-';
-    return [`Событие #${eventId}`, `Основной (${lists.main.length}/${MAIN_LIST_MAX_SLOTS}):`, mainLines, `Запасной (${lists.reserve.length}):`, reserveLines].join('\n');
+    return [`Событие #${event.id}`, `Основной (${lists.main.length}/${mainListMax}):`, mainLines, `Запасной (${lists.reserve.length}):`, reserveLines].join('\n');
 }
 function parseDateTime(value) {
     const direct = new Date(value);
