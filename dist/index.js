@@ -3,7 +3,7 @@ import './database/migrate.js';
 import { env } from './env.js';
 import { handleApplicationButton, handleApplicationCommand, handleApplicationModal } from './features/applications.js';
 import { handleCheatButton, handleCheatCommand, handleCheatModal } from './features/cheatChecks.js';
-import { handleEventButton, handleEventCommand, startReminderScheduler } from './features/events.js';
+import { handleEventButton, handleEventCommand, handleEventSelect, startReminderScheduler } from './features/events.js';
 import { handleProfileButton, handleProfileCommand } from './features/playerProfiles.js';
 import { handleRoleRecoveryButton, handleRoleRecoveryCommand } from './features/roleRecovery.js';
 import { handleSettingsButton, handleSettingsCommand } from './features/settings.js';
@@ -57,6 +57,12 @@ client.on('interactionCreate', async (interaction) => {
             if (await handleEventButton(interaction))
                 return;
             await interaction.reply({ content: 'Кнопка пока не обработана.', flags: MessageFlags.Ephemeral });
+            return;
+        }
+        if (interaction.isStringSelectMenu()) {
+            if (await handleEventSelect(interaction))
+                return;
+            await interaction.reply({ content: 'Меню пока не обработано.', flags: MessageFlags.Ephemeral });
             return;
         }
         if (interaction.isModalSubmit()) {

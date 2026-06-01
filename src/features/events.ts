@@ -10,6 +10,8 @@ import {
   Guild,
   GuildMember,
   MessageFlags,
+  StringSelectMenuBuilder,
+  StringSelectMenuInteraction,
   TextChannel,
 } from 'discord.js';
 import { db } from '../database/db.js';
@@ -52,6 +54,30 @@ type CreateEventInput = {
 const CAPT_SIDE_LABELS: Record<string, string> = {
   attack: 'Атака',
   deff: 'Деф',
+};
+
+const MAIN_LIST_MAX_SLOTS = 35;
+
+const TIER_LIST_EMOJIS: Record<TierNumber, string> = {
+  1: '1️⃣',
+  2: '2️⃣',
+  3: '3️⃣',
+};
+
+const PROMOTED_FROM_RESERVE_EMOJI = '💣';
+
+type EventSignupRow = {
+  user_id: string;
+  list_type: string;
+  tier: number | null;
+  promoted_from_reserve: number;
+  created_at: number;
+};
+
+type EventMainEntry = {
+  userId: string;
+  tier: TierNumber;
+  promotedFromReserve: boolean;
 };
 
 export async function handleEventCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
@@ -205,16 +231,28 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
         return true;
       }
 
+      let listType = placement.listType;
+      let tier = placement.tier;
+      let overflowNote = '';
+      if (listType === 'main' && countMainSignups(eventId) >= MAIN_LIST_MAX_SLOTS) {
+        listType = 'reserve';
+        tier = null;
+        overflowNote = ' Основной список заполнен (35/35), ты записан в запас.';
+      }
+
       await interaction.deferUpdate();
       db.prepare(
-        `INSERT INTO event_signups (event_id, user_id, list_type, tier)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(event_id, user_id) DO UPDATE SET list_type = excluded.list_type, tier = excluded.tier`,
-      ).run(eventId, interaction.user.id, placement.listType, placement.tier);
+        `INSERT INTO event_signups (event_id, user_id, list_type, tier, promoted_from_reserve)
+         VALUES (?, ?, ?, ?, 0)
+         ON CONFLICT(event_id, user_id) DO UPDATE SET
+           list_type = excluded.list_type,
+           tier = excluded.tier,
+           promoted_from_reserve = 0`,
+      ).run(eventId, interaction.user.id, listType, tier);
       await refreshEventMessage(interaction.guild, eventId);
-      await interaction.followUp(
-        privateReply(`Ты записан в ${placement.listType === 'main' ? `основной список, тир ${placement.tier}` : 'запасной список'}.`),
-      );
+      const listLabel =
+        listType === 'main' ? `основной список (тир ${tier})` : `запасной список${placement.listType === 'main' ? ', основной был полон' : ''}`;
+      await interaction.followUp(privateReply(`Ты записан в ${listLabel}.${overflowNote}`));
       return true;
     }
 
@@ -268,6 +306,53 @@ export async function handleEventButton(interaction: ButtonInteraction): Promise
     return true;
   }
 
+  if (action === 'promote-reserve') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await showPromoteReserveMenu(interaction, event);
+    return true;
+  }
+
+  return true;
+}
+
+export async function handleEventSelect(interaction: StringSelectMenuInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith('event:promote-pick:')) {
+    return false;
+  }
+
+  if (!interaction.guild) {
+    await interaction.reply(privateReply('Мероприятия работают только на сервере.'));
+    return true;
+  }
+
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member || !hasAdminRole(member)) {
+    await interaction.reply(privateReply('Переносить игроков могут только участники с admin_role_id.'));
+    return true;
+  }
+
+  const eventId = Number(interaction.customId.split(':')[2]);
+  const event = getEvent(eventId, interaction.guild.id);
+  if (!event) {
+    await interaction.reply(privateReply('Мероприятие не найдено.'));
+    return true;
+  }
+
+  if (isEventListClosed(event)) {
+    await interaction.reply(privateReply('Запись на это МП закрыта.'));
+    return true;
+  }
+
+  const userId = interaction.values[0];
+  await interaction.deferUpdate();
+  const result = await promoteReserveToMain(interaction.guild, eventId, userId, interaction.user.id);
+  if (!result.ok) {
+    await interaction.followUp(privateReply(result.message));
+    return true;
+  }
+
+  await refreshEventMessage(interaction.guild, eventId);
+  await interaction.followUp(privateReply(result.message));
   return true;
 }
 
@@ -466,10 +551,8 @@ function buildEventMessagePayload(eventId: number, guild: Guild, options?: { ann
     .setDescription(buildEventDescription(event))
     .addFields(
       { name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' },
-      { name: 'Основной Тир 1', value: formatUsers(lists.main1), inline: true },
-      { name: 'Основной Тир 2', value: formatUsers(lists.main2), inline: true },
-      { name: 'Основной Тир 3', value: formatUsers(lists.main3), inline: true },
-      { name: 'Запасной', value: formatUsers(lists.reserve), inline: false },
+      { name: `Основной список (${lists.main.length}/${MAIN_LIST_MAX_SLOTS})`, value: formatMainList(lists.main), inline: false },
+      { name: `Запасной (${lists.reserve.length})`, value: formatReserveList(lists.reserve), inline: false },
     )
     .setColor(event.type === 'kapt' ? 0xed4245 : 0x5865f2);
 
@@ -498,6 +581,11 @@ function buildEventMessagePayload(eventId: number, guild: Guild, options?: { ann
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
+        .setCustomId(`event:promote-reserve:${eventId}`)
+        .setLabel('Из запаса в основной')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(listClosed),
+      new ButtonBuilder()
         .setCustomId(`event:close-list:${eventId}`)
         .setLabel(listClosed ? 'Открыть запись' : 'Закрыть список')
         .setStyle(listClosed ? ButtonStyle.Success : ButtonStyle.Secondary),
@@ -521,22 +609,142 @@ function buildEventMessagePayload(eventId: number, guild: Guild, options?: { ann
   return payload;
 }
 
-function getEventLists(eventId: number) {
-  const rows = db.prepare('SELECT user_id, list_type, tier FROM event_signups WHERE event_id = ? ORDER BY created_at').all(eventId) as Array<{
-    user_id: string;
-    list_type: string;
-    tier: number | null;
-  }>;
-  return {
-    main1: rows.filter((row) => row.list_type === 'main' && row.tier === 1).map((row) => row.user_id),
-    main2: rows.filter((row) => row.list_type === 'main' && row.tier === 2).map((row) => row.user_id),
-    main3: rows.filter((row) => row.list_type === 'main' && row.tier === 3).map((row) => row.user_id),
-    reserve: rows.filter((row) => row.list_type === 'reserve').map((row) => row.user_id),
-  };
+function getEventSignupRows(eventId: number): EventSignupRow[] {
+  return db
+    .prepare(
+      `SELECT user_id, list_type, tier, COALESCE(promoted_from_reserve, 0) AS promoted_from_reserve, created_at
+       FROM event_signups WHERE event_id = ?`,
+    )
+    .all(eventId) as EventSignupRow[];
 }
 
-function formatUsers(userIds: string[]): string {
-  return userIds.length ? userIds.map((id) => `<@${id}>`).join('\n').slice(0, 1024) : 'Пусто';
+function sortMainSignupRows(rows: EventSignupRow[]): EventSignupRow[] {
+  return rows
+    .filter((row) => row.list_type === 'main' && row.tier !== null)
+    .sort((left, right) => {
+      const tierDiff = (left.tier ?? 99) - (right.tier ?? 99);
+      if (tierDiff !== 0) {
+        return tierDiff;
+      }
+
+      return left.created_at - right.created_at;
+    });
+}
+
+function countMainSignups(eventId: number): number {
+  return sortMainSignupRows(getEventSignupRows(eventId)).length;
+}
+
+function getEventLists(eventId: number) {
+  const rows = getEventSignupRows(eventId);
+  const main = sortMainSignupRows(rows).slice(0, MAIN_LIST_MAX_SLOTS).map((row) => ({
+    userId: row.user_id,
+    tier: row.tier as TierNumber,
+    promotedFromReserve: Boolean(row.promoted_from_reserve),
+  }));
+  const reserve = rows
+    .filter((row) => row.list_type === 'reserve')
+    .sort((left, right) => left.created_at - right.created_at)
+    .map((row) => row.user_id);
+
+  return { main, reserve };
+}
+
+function formatMainListLine(position: number, entry: EventMainEntry): string {
+  const emoji = entry.promotedFromReserve ? PROMOTED_FROM_RESERVE_EMOJI : TIER_LIST_EMOJIS[entry.tier];
+  return `${position}. <@${entry.userId}> ${emoji}`;
+}
+
+function formatMainList(entries: EventMainEntry[]): string {
+  if (!entries.length) {
+    return 'Пусто';
+  }
+
+  return entries.map((entry, index) => formatMainListLine(index + 1, entry)).join('\n').slice(0, 1024);
+}
+
+function formatReserveList(userIds: string[]): string {
+  if (!userIds.length) {
+    return 'Пусто';
+  }
+
+  return userIds.map((userId, index) => `${index + 1}. <@${userId}>`).join('\n').slice(0, 1024);
+}
+
+async function showPromoteReserveMenu(interaction: ButtonInteraction, event: EventRow) {
+  if (!interaction.guild) {
+    return;
+  }
+
+  const lists = getEventLists(event.id);
+  if (!lists.reserve.length) {
+    await interaction.editReply('В запасном списке никого нет.');
+    return;
+  }
+
+  if (lists.main.length >= MAIN_LIST_MAX_SLOTS) {
+    await interaction.editReply(`Основной список уже заполнен (${MAIN_LIST_MAX_SLOTS}/${MAIN_LIST_MAX_SLOTS}).`);
+    return;
+  }
+
+  const options = await Promise.all(
+    lists.reserve.slice(0, 25).map(async (userId, index) => {
+      const player = await interaction.guild!.members.fetch(userId).catch(() => null);
+      return {
+        label: (player?.displayName ?? `Игрок ${index + 1}`).slice(0, 100),
+        description: `Запас #${index + 1}`,
+        value: userId,
+      };
+    }),
+  );
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`event:promote-pick:${event.id}`)
+    .setPlaceholder('Выбери игрока из запаса')
+    .addOptions(options);
+
+  await interaction.editReply({
+    content: `Перенос в основной список (${lists.main.length}/${MAIN_LIST_MAX_SLOTS}). Выбери игрока:`,
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+  });
+}
+
+async function promoteReserveToMain(
+  guild: Guild,
+  eventId: number,
+  userId: string,
+  adminId: string,
+): Promise<{ ok: boolean; message: string }> {
+  const signup = db
+    .prepare('SELECT list_type FROM event_signups WHERE event_id = ? AND user_id = ?')
+    .get(eventId, userId) as { list_type: string } | undefined;
+
+  if (!signup || signup.list_type !== 'reserve') {
+    return { ok: false, message: 'Игрок не найден в запасном списке.' };
+  }
+
+  if (countMainSignups(eventId) >= MAIN_LIST_MAX_SLOTS) {
+    return { ok: false, message: `Основной список уже заполнен (${MAIN_LIST_MAX_SLOTS}/${MAIN_LIST_MAX_SLOTS}).` };
+  }
+
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) {
+    return { ok: false, message: 'Не удалось найти участника на сервере.' };
+  }
+
+  const tier = getMemberTier(member);
+  if (!tier) {
+    return { ok: false, message: 'В основной список можно переносить только игроков с ролью тира.' };
+  }
+
+  db.prepare(
+    `UPDATE event_signups
+     SET list_type = 'main', tier = ?, promoted_from_reserve = 1
+     WHERE event_id = ? AND user_id = ?`,
+  ).run(tier, eventId, userId);
+
+  audit(guild.id, 'event.promoted_from_reserve', { eventId, userId, tier }, adminId, userId);
+  return { ok: true, message: `<@${userId}> перенесен в основной список ${PROMOTED_FROM_RESERVE_EMOJI} (тир ${tier}).` };
 }
 
 async function refreshEventMessage(guild: Guild, eventId: number) {
@@ -692,13 +900,14 @@ async function deleteEventMessage(interaction: ButtonInteraction, event: EventRo
 
 function formatExport(eventId: number): string {
   const lists = getEventLists(eventId);
-  return [
-    `Событие #${eventId}`,
-    `Основной Тир 1: ${lists.main1.map((id) => `<@${id}>`).join(', ') || '-'}`,
-    `Основной Тир 2: ${lists.main2.map((id) => `<@${id}>`).join(', ') || '-'}`,
-    `Основной Тир 3: ${lists.main3.map((id) => `<@${id}>`).join(', ') || '-'}`,
-    `Запасной: ${lists.reserve.map((id) => `<@${id}>`).join(', ') || '-'}`,
-  ].join('\n');
+  const mainLines = lists.main.length
+    ? lists.main.map((entry, index) => formatMainListLine(index + 1, entry)).join('\n')
+    : '-';
+  const reserveLines = lists.reserve.length
+    ? lists.reserve.map((userId, index) => `${index + 1}. <@${userId}>`).join('\n')
+    : '-';
+
+  return [`Событие #${eventId}`, `Основной (${lists.main.length}/${MAIN_LIST_MAX_SLOTS}):`, mainLines, `Запасной (${lists.reserve.length}):`, reserveLines].join('\n');
 }
 
 function parseDateTime(value: string): Date | null {
