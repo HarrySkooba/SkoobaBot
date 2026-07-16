@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client, Events, GatewayIntentBits, MessageFlags, Partials } from 'discord.js';
 import './database/migrate.js';
 import { env } from './env.js';
@@ -8,6 +11,8 @@ import { handleProfileButton, handleProfileCommand } from './features/playerProf
 import { handleRoleRecoveryButton, handleRoleRecoveryCommand } from './features/roleRecovery.js';
 import { handleSettingsButton, handleSettingsCommand } from './features/settings.js';
 import { registerGuildCommands } from './registerCommands.js';
+
+const botVersion = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8')).version as string;
 
 const client = new Client({
   intents: [
@@ -21,7 +26,7 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, async () => {
-  console.log(`Skooba bot logged in as ${client.user?.tag}`);
+  console.log(`Skooba bot v${botVersion} logged in as ${client.user?.tag}`);
   await registerGuildCommands().catch((error) => {
     console.error('Failed to register guild commands:', error);
   });
