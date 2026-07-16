@@ -1,6 +1,6 @@
 import { Routes } from 'discord-api-types/v10';
 import { MessageFlags } from 'discord-api-types/v10';
-import { getSetting, setSetting } from '../database/settings.js';
+import { getSetting, setSetting, deleteSetting } from '../database/settings.js';
 const COMPONENT_TEXT_DISPLAY = 10;
 const COMPONENT_MEDIA_GALLERY = 12;
 const COMPONENT_SEPARATOR = 14;
@@ -90,16 +90,37 @@ export async function sendApplicationPanel(channel, guildId, updatedBy) {
     }
     return message;
 }
+function clearApplicationPanelPointer(guildId) {
+    deleteSetting(guildId, 'application_panel_channel_id');
+    deleteSetting(guildId, 'application_panel_message_id');
+}
+function isMissingPanelResourceError(error) {
+    if (!error || typeof error !== 'object' || !('code' in error)) {
+        return false;
+    }
+    const code = error.code;
+    return code === 10003 || code === 10008;
+}
 export async function refreshApplicationPanel(client, guildId) {
     const channelId = getSetting(guildId, 'application_panel_channel_id');
     const messageId = getSetting(guildId, 'application_panel_message_id');
     if (!channelId || !messageId) {
         return false;
     }
-    await client.rest.patch(Routes.channelMessage(channelId, messageId), {
-        body: buildApplicationPanelBody(guildId),
-    });
-    return true;
+    try {
+        await client.rest.patch(Routes.channelMessage(channelId, messageId), {
+            body: buildApplicationPanelBody(guildId),
+        });
+        return true;
+    }
+    catch (error) {
+        if (isMissingPanelResourceError(error)) {
+            clearApplicationPanelPointer(guildId);
+            console.warn(`Application panel message not found (guild ${guildId}, channel ${channelId}, message ${messageId}). Cleared saved panel pointer.`);
+            return false;
+        }
+        throw error;
+    }
 }
 export async function tryRefreshApplicationPanel(guild) {
     return refreshApplicationPanel(guild.client, guild.id);

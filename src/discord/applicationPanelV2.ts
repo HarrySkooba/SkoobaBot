@@ -1,7 +1,7 @@
 import { Routes } from 'discord-api-types/v10';
 import { MessageFlags } from 'discord-api-types/v10';
 import type { Client, Guild, TextChannel } from 'discord.js';
-import { getSetting, setSetting } from '../database/settings.js';
+import { getSetting, setSetting, deleteSetting } from '../database/settings.js';
 
 const COMPONENT_TEXT_DISPLAY = 10;
 const COMPONENT_MEDIA_GALLERY = 12;
@@ -111,6 +111,20 @@ export async function sendApplicationPanel(channel: TextChannel, guildId: string
   return message;
 }
 
+function clearApplicationPanelPointer(guildId: string): void {
+  deleteSetting(guildId, 'application_panel_channel_id');
+  deleteSetting(guildId, 'application_panel_message_id');
+}
+
+function isMissingPanelResourceError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return false;
+  }
+
+  const code = (error as { code?: number }).code;
+  return code === 10003 || code === 10008;
+}
+
 export async function refreshApplicationPanel(client: Client, guildId: string): Promise<boolean> {
   const channelId = getSetting(guildId, 'application_panel_channel_id');
   const messageId = getSetting(guildId, 'application_panel_message_id');
@@ -118,10 +132,22 @@ export async function refreshApplicationPanel(client: Client, guildId: string): 
     return false;
   }
 
-  await client.rest.patch(Routes.channelMessage(channelId, messageId), {
-    body: buildApplicationPanelBody(guildId),
-  });
-  return true;
+  try {
+    await client.rest.patch(Routes.channelMessage(channelId, messageId), {
+      body: buildApplicationPanelBody(guildId),
+    });
+    return true;
+  } catch (error) {
+    if (isMissingPanelResourceError(error)) {
+      clearApplicationPanelPointer(guildId);
+      console.warn(
+        `Application panel message not found (guild ${guildId}, channel ${channelId}, message ${messageId}). Cleared saved panel pointer.`,
+      );
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 export async function tryRefreshApplicationPanel(guild: Guild): Promise<boolean> {

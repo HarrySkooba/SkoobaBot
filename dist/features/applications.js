@@ -20,7 +20,7 @@ export async function handleApplicationCommand(interaction) {
         setSetting(interaction.guild.id, 'applications_open', open ? 'true' : 'false', interaction.user.id);
         const updated = await refreshApplicationPanel(interaction.client, interaction.guild.id);
         if (!updated) {
-            await interaction.reply(privateReply(`Приём заявок ${open ? 'открыт' : 'закрыт'}, но панель не обновлена: сначала опубликуй \`/application-panel\` в канале заявок.`));
+            await interaction.reply(privateReply(`Приём заявок ${open ? 'открыт' : 'закрыт'}, но панель не обновлена: опубликуй \`/application-panel\` в канале заявок (старая панель могла быть удалена).`));
             return true;
         }
         await interaction.reply(privateReply(`Приём заявок ${open ? 'открыт' : 'закрыт'}. Панель обновлена.`));
