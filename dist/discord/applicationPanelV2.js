@@ -1,5 +1,6 @@
 import { Routes } from 'discord-api-types/v10';
 import { MessageFlags } from 'discord-api-types/v10';
+import { DiscordAPIError } from '@discordjs/rest';
 import { getSetting, setSetting, deleteSetting } from '../database/settings.js';
 const COMPONENT_TEXT_DISPLAY = 10;
 const COMPONENT_MEDIA_GALLERY = 12;
@@ -95,11 +96,10 @@ function clearApplicationPanelPointer(guildId) {
     deleteSetting(guildId, 'application_panel_message_id');
 }
 function isMissingPanelResourceError(error) {
-    if (!error || typeof error !== 'object' || !('code' in error)) {
-        return false;
+    if (error instanceof DiscordAPIError) {
+        return error.code === 10003 || error.code === 10008;
     }
-    const code = error.code;
-    return code === 10003 || code === 10008;
+    return false;
 }
 export async function refreshApplicationPanel(client, guildId) {
     const channelId = getSetting(guildId, 'application_panel_channel_id');

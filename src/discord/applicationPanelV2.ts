@@ -1,5 +1,6 @@
 import { Routes } from 'discord-api-types/v10';
 import { MessageFlags } from 'discord-api-types/v10';
+import { DiscordAPIError } from '@discordjs/rest';
 import type { Client, Guild, TextChannel } from 'discord.js';
 import { getSetting, setSetting, deleteSetting } from '../database/settings.js';
 
@@ -117,12 +118,11 @@ function clearApplicationPanelPointer(guildId: string): void {
 }
 
 function isMissingPanelResourceError(error: unknown): boolean {
-  if (!error || typeof error !== 'object' || !('code' in error)) {
-    return false;
+  if (error instanceof DiscordAPIError) {
+    return error.code === 10003 || error.code === 10008;
   }
 
-  const code = (error as { code?: number }).code;
-  return code === 10003 || code === 10008;
+  return false;
 }
 
 export async function refreshApplicationPanel(client: Client, guildId: string): Promise<boolean> {

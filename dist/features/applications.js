@@ -18,7 +18,13 @@ export async function handleApplicationCommand(interaction) {
         const subcommand = interaction.options.getSubcommand();
         const open = subcommand === 'open';
         setSetting(interaction.guild.id, 'applications_open', open ? 'true' : 'false', interaction.user.id);
-        const updated = await refreshApplicationPanel(interaction.client, interaction.guild.id);
+        let updated = false;
+        try {
+            updated = await refreshApplicationPanel(interaction.client, interaction.guild.id);
+        }
+        catch (error) {
+            console.error('Failed to refresh application panel:', error);
+        }
         if (!updated) {
             await interaction.reply(privateReply(`Приём заявок ${open ? 'открыт' : 'закрыт'}, но панель не обновлена: опубликуй \`/application-panel\` в канале заявок (старая панель могла быть удалена).`));
             return true;
