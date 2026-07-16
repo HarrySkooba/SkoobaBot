@@ -3,6 +3,7 @@ export const settingKeys = [
     'admin_role_id',
     'staff_role_id',
     'family_role_id',
+    'rp_role_id',
     'verified_role_id',
     'unverified_role_id',
     'mentor_role_id',

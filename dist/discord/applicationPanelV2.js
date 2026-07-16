@@ -55,8 +55,15 @@ export function buildApplicationPanelBody(guildId) {
             {
                 type: COMPONENT_BUTTON,
                 style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
-                label: open ? 'Подать заявку' : 'Приём заявок закрыт',
-                custom_id: 'application:open',
+                label: open ? 'Подать заявку в капт/mcl' : 'капт/mcl — закрыто',
+                custom_id: 'application:open:capt_mcl',
+                disabled: !open,
+            },
+            {
+                type: COMPONENT_BUTTON,
+                style: open ? BUTTON_STYLE_PRIMARY : BUTTON_STYLE_SECONDARY,
+                label: open ? 'Подать заявку в РП' : 'РП — закрыто',
+                custom_id: 'application:open:rp',
                 disabled: !open,
             },
         ],

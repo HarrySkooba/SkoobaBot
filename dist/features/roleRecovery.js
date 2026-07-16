@@ -1,12 +1,20 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, } from 'discord.js';
 import { getRoleRule, getSetting } from '../database/settings.js';
 import { audit, grantRolesToMember, isAdmin, memberHasRole, privateReply, uniqueRoleIds } from '../discord/helpers.js';
-export function getApplicationAcceptRoleIds(guildId) {
+export function getApplicationAcceptRoleIds(guildId, applicationType = 'capt_mcl') {
     const rule = getRoleRule(guildId, 'application_accept');
-    return uniqueRoleIds([getSetting(guildId, 'family_role_id'), getSetting(guildId, 'unverified_role_id'), rule.grantRoleId]);
+    const roleIds = uniqueRoleIds([
+        getSetting(guildId, 'family_role_id'),
+        getSetting(guildId, 'unverified_role_id'),
+        rule.grantRoleId,
+    ]);
+    if (applicationType === 'rp') {
+        return uniqueRoleIds([...roleIds, getSetting(guildId, 'rp_role_id')]);
+    }
+    return roleIds;
 }
-export async function grantApplicationAcceptRoles(member) {
-    return grantRolesToMember(member, getApplicationAcceptRoleIds(member.guild.id));
+export async function grantApplicationAcceptRoles(member, applicationType = 'capt_mcl') {
+    return grantRolesToMember(member, getApplicationAcceptRoleIds(member.guild.id, applicationType));
 }
 export async function handleRoleRecoveryCommand(interaction) {
     if (interaction.commandName !== 'role-panel') {

@@ -386,10 +386,24 @@ function buildEventMessagePayload(eventId, guild, options) {
     const lists = getEventLists(eventId, event);
     const listClosed = isEventListClosed(event);
     const typeLabel = getEventTypeLabel(event);
+    const mainListChunks = formatMainList(lists.main);
+    const reserveListChunks = formatReserveList(lists.reserve);
     const embed = new EmbedBuilder()
         .setTitle(`${typeLabel} #${event.id}`)
         .setDescription(buildEventDescription(event))
-        .addFields({ name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' }, { name: `Основной список (${lists.main.length}/${mainListMax})`, value: formatMainList(lists.main), inline: false }, { name: `Запасной (${lists.reserve.length})`, value: formatReserveList(lists.reserve), inline: false })
+        .addFields({ name: 'Запись на МП', value: listClosed ? '🔒 Закрыта' : '✅ Открыта' }, ...mainListChunks.map((chunk, index) => ({
+        name: mainListChunks.length > 1
+            ? `Основной список (${lists.main.length}/${mainListMax}) — часть ${index + 1}/${mainListChunks.length}`
+            : `Основной список (${lists.main.length}/${mainListMax})`,
+        value: chunk,
+        inline: false,
+    })), ...reserveListChunks.map((chunk, index) => ({
+        name: reserveListChunks.length > 1
+            ? `Запасной (${lists.reserve.length}) — часть ${index + 1}/${reserveListChunks.length}`
+            : `Запасной (${lists.reserve.length})`,
+        value: chunk,
+        inline: false,
+    })))
         .setColor(event.type === 'kapt' ? 0xed4245 : 0x5865f2);
     if (event.image_url) {
         embed.setImage(event.image_url);
@@ -483,17 +497,41 @@ function formatMainListLine(position, entry) {
             : '—';
     return `${position}. <@${entry.userId}> ${emoji}`;
 }
+function chunkEmbedFieldLines(lines, maxLength = 1024) {
+    if (!lines.length) {
+        return ['Пусто'];
+    }
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+        const next = current ? `${current}\n${line}` : line;
+        if (next.length <= maxLength) {
+            current = next;
+            continue;
+        }
+        if (current) {
+            chunks.push(current);
+        }
+        current = line.length <= maxLength ? line : `${line.slice(0, maxLength - 3)}...`;
+    }
+    if (current) {
+        chunks.push(current);
+    }
+    return chunks;
+}
 function formatMainList(entries) {
     if (!entries.length) {
-        return 'Пусто';
+        return ['Пусто'];
     }
-    return entries.map((entry, index) => formatMainListLine(index + 1, entry)).join('\n').slice(0, 1024);
+    const lines = entries.map((entry, index) => formatMainListLine(index + 1, entry));
+    return chunkEmbedFieldLines(lines);
 }
 function formatReserveList(userIds) {
     if (!userIds.length) {
-        return 'Пусто';
+        return ['Пусто'];
     }
-    return userIds.map((userId, index) => `${index + 1}. <@${userId}>`).join('\n').slice(0, 1024);
+    const lines = userIds.map((userId, index) => `${index + 1}. <@${userId}>`);
+    return chunkEmbedFieldLines(lines);
 }
 async function showPromoteReserveMenu(interaction, event) {
     if (!interaction.guild) {

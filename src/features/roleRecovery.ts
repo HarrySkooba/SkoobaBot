@@ -9,13 +9,28 @@ import {
 import { getRoleRule, getSetting, SettingKey } from '../database/settings.js';
 import { audit, grantRolesToMember, isAdmin, memberHasRole, privateReply, uniqueRoleIds } from '../discord/helpers.js';
 
-export function getApplicationAcceptRoleIds(guildId: string): string[] {
+export type ApplicationType = 'capt_mcl' | 'rp';
+
+export function getApplicationAcceptRoleIds(guildId: string, applicationType: ApplicationType = 'capt_mcl'): string[] {
   const rule = getRoleRule(guildId, 'application_accept');
-  return uniqueRoleIds([getSetting(guildId, 'family_role_id'), getSetting(guildId, 'unverified_role_id'), rule.grantRoleId]);
+  const roleIds = uniqueRoleIds([
+    getSetting(guildId, 'family_role_id'),
+    getSetting(guildId, 'unverified_role_id'),
+    rule.grantRoleId,
+  ]);
+
+  if (applicationType === 'rp') {
+    return uniqueRoleIds([...roleIds, getSetting(guildId, 'rp_role_id')]);
+  }
+
+  return roleIds;
 }
 
-export async function grantApplicationAcceptRoles(member: import('discord.js').GuildMember): Promise<string[]> {
-  return grantRolesToMember(member, getApplicationAcceptRoleIds(member.guild.id));
+export async function grantApplicationAcceptRoles(
+  member: import('discord.js').GuildMember,
+  applicationType: ApplicationType = 'capt_mcl',
+): Promise<string[]> {
+  return grantRolesToMember(member, getApplicationAcceptRoleIds(member.guild.id, applicationType));
 }
 
 export async function handleRoleRecoveryCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {

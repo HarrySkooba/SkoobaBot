@@ -61,12 +61,12 @@ export async function handleApplicationButton(interaction) {
         await interaction.reply(privateReply('Заявки работают только на сервере.'));
         return true;
     }
-    if (interaction.customId === 'application:open') {
+    if (interaction.customId === 'application:open:capt_mcl' || interaction.customId === 'application:open') {
         if (!isApplicationsOpen(interaction.guild.id)) {
             await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
             return true;
         }
-        const modal = new ModalBuilder().setCustomId('application:modal').setTitle('Заявка в Skooba');
+        const modal = new ModalBuilder().setCustomId('application:modal:capt_mcl').setTitle('Заявка в Skooba (капт/mcl)');
         modal.addComponents(inputRow('identity', 'Ник в игре | Статик | Возраст', TextInputStyle.Short, {
             placeholder: 'Harry Skooba | 5595 | 21',
         }), inputRow('majestic_experience', 'Опыт на Majestic', TextInputStyle.Paragraph, {
@@ -75,6 +75,20 @@ export async function handleApplicationButton(interaction) {
             placeholder: 'Название - Причина',
         }), inputRow('referral_source', 'Откуда узнали о семье?', TextInputStyle.Paragraph), inputRow('rollbacks', 'Откаты', TextInputStyle.Paragraph, {
             placeholder: 'GG - ссылка, MCL - ссылка, CAPT - ссылка',
+        }));
+        await interaction.showModal(modal);
+        return true;
+    }
+    if (interaction.customId === 'application:open:rp') {
+        if (!isApplicationsOpen(interaction.guild.id)) {
+            await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
+            return true;
+        }
+        const modal = new ModalBuilder().setCustomId('application:modal:rp').setTitle('Заявка в Skooba (РП)');
+        modal.addComponents(inputRow('identity', 'Ник в игре | Статик | Возраст', TextInputStyle.Short, {
+            placeholder: 'Harry Skooba | 5595 | 21',
+        }), inputRow('online_timezone', 'Средний онлайн | Часовой пояс', TextInputStyle.Short, {
+            placeholder: '4-6 часов | UTC+3',
         }));
         await interaction.showModal(modal);
         return true;
@@ -114,7 +128,7 @@ export async function handleApplicationButton(interaction) {
     return true;
 }
 export async function handleApplicationModal(interaction) {
-    if (interaction.customId === 'application:modal') {
+    if (interaction.customId === 'application:modal:capt_mcl' || interaction.customId === 'application:modal') {
         if (!interaction.guild) {
             await interaction.reply(privateReply('Заявки работают только на сервере.'));
             return true;
@@ -125,6 +139,7 @@ export async function handleApplicationModal(interaction) {
         }
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const answers = {
+            application_type: 'capt_mcl',
             identity: interaction.fields.getTextInputValue('identity'),
             majestic_experience: interaction.fields.getTextInputValue('majestic_experience'),
             families: interaction.fields.getTextInputValue('families'),
@@ -138,6 +153,30 @@ export async function handleApplicationModal(interaction) {
         await publishApplication(interaction.guild, applicationId, interaction.user.id, answers);
         audit(interaction.guild.id, 'application.created', { applicationId, answers }, interaction.user.id, interaction.user.id);
         await interaction.editReply('Заявка отправлена. Ожидай ответа стаффа.');
+        return true;
+    }
+    if (interaction.customId === 'application:modal:rp') {
+        if (!interaction.guild) {
+            await interaction.reply(privateReply('Заявки работают только на сервере.'));
+            return true;
+        }
+        if (!isApplicationsOpen(interaction.guild.id)) {
+            await interaction.reply(privateReply('Приём заявок сейчас закрыт.'));
+            return true;
+        }
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const answers = {
+            application_type: 'rp',
+            identity: interaction.fields.getTextInputValue('identity'),
+            online_timezone: interaction.fields.getTextInputValue('online_timezone'),
+        };
+        const result = db
+            .prepare('INSERT INTO applications (guild_id, user_id, answers_json) VALUES (?, ?, ?)')
+            .run(interaction.guild.id, interaction.user.id, JSON.stringify(answers));
+        const applicationId = Number(result.lastInsertRowid);
+        await publishApplication(interaction.guild, applicationId, interaction.user.id, answers);
+        audit(interaction.guild.id, 'application.created', { applicationId, answers }, interaction.user.id, interaction.user.id);
+        await interaction.editReply('Заявка в РП отправлена. Ожидай ответа стаффа.');
         return true;
     }
     if (interaction.customId.startsWith('application-call:')) {
@@ -216,6 +255,12 @@ function truncateEmbedField(value, max = 1024) {
 function parseAnswers(answersJson) {
     return JSON.parse(answersJson);
 }
+function getApplicationType(answers) {
+    return answers.application_type === 'rp' ? 'rp' : 'capt_mcl';
+}
+function applicationTypeLabel(type) {
+    return type === 'rp' ? 'РП' : 'капт/mcl';
+}
 function extractApplicantNick(answers) {
     const identity = answers.identity ?? '';
     const nick = identity.split('|')[0]?.trim();
@@ -257,13 +302,14 @@ function applicationStatusColor(status) {
 }
 function buildApplicationTitle(applicationId, answers, status) {
     const nick = extractApplicantNick(answers);
+    const typeLabel = applicationTypeLabel(getApplicationType(answers));
     if (status === 'accepted') {
-        return `Заявка #${applicationId}: принята — ${nick}`;
+        return `Заявка #${applicationId} (${typeLabel}): принята — ${nick}`;
     }
     if (status === 'rejected') {
-        return `Заявка #${applicationId}: отклонена — ${nick}`;
+        return `Заявка #${applicationId} (${typeLabel}): отклонена — ${nick}`;
     }
-    return `Заявка #${applicationId} — ${nick}`;
+    return `Заявка #${applicationId} (${typeLabel}) — ${nick}`;
 }
 function buildApplicationEmbed(application, answers, options) {
     const schedule = getLatestCallSchedule(application.id);
@@ -288,28 +334,36 @@ function buildApplicationEmbed(application, answers, options) {
     if (status === 'rejected' && application.reject_reason) {
         embed.addFields({ name: 'Причина отказа', value: truncateEmbedField(application.reject_reason, 1024) });
     }
-    embed
-        .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity ?? '—') }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience ?? '—') }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families ?? '—') }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source ?? '—') }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks ?? '—') });
+    const applicationType = getApplicationType(answers);
+    if (applicationType === 'rp') {
+        embed.addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity ?? '—') }, { name: 'Средний онлайн | Часовой пояс', value: truncateEmbedField(answers.online_timezone ?? '—') });
+    }
+    else {
+        embed
+            .addFields({ name: 'Ник | Статик | Возраст', value: truncateEmbedField(answers.identity ?? '—') }, { name: 'Опыт на Majestic', value: truncateEmbedField(answers.majestic_experience ?? '—') }, { name: 'Семьи и причины ухода', value: truncateEmbedField(answers.families ?? '—') }, { name: 'Откуда узнали о семье', value: truncateEmbedField(answers.referral_source ?? '—') }, { name: 'Откаты', value: truncateEmbedField(answers.rollbacks ?? '—') });
+    }
     return embed;
 }
 function reviewButtons(applicationId) {
     return new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`application:call:${applicationId}`).setLabel('Назначить обзвон').setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`application:accept:${applicationId}`).setLabel('Принять').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`application:reject:${applicationId}`).setLabel('Отклонить').setStyle(ButtonStyle.Danger));
 }
-function buildReviewChannelContent(guildId) {
+function buildReviewChannelContent(guildId, applicationType) {
     const staffRoleId = getSetting(guildId, 'staff_role_id');
+    const typeLabel = applicationTypeLabel(applicationType);
     if (!staffRoleId) {
-        return { content: 'Новая заявка в семью Skooba.', allowedMentions: { parse: [] } };
+        return { content: `Новая заявка в семью Skooba (${typeLabel}).`, allowedMentions: { parse: [] } };
     }
     return {
-        content: `<@&${staffRoleId}> новая заявка в семью Skooba.`,
+        content: `<@&${staffRoleId}> новая заявка в семью Skooba (${typeLabel}).`,
         allowedMentions: { roles: [staffRoleId] },
     };
 }
-async function notifyStaffAndAdmins(guild, applicationId, applicantId, applicantNick) {
+async function notifyStaffAndAdmins(guild, applicationId, applicantId, applicantNick, applicationType) {
     const roleIds = uniqueRoleIds([getSetting(guild.id, 'staff_role_id'), getSetting(guild.id, 'admin_role_id')]);
     if (!roleIds.length) {
         return;
     }
+    const typeLabel = applicationTypeLabel(applicationType);
     const members = await guild.members.fetch();
     const notified = new Set();
     for (const member of members.values()) {
@@ -320,7 +374,7 @@ async function notifyStaffAndAdmins(guild, applicationId, applicantId, applicant
             continue;
         }
         notified.add(member.id);
-        await safeDm(member, `Новая заявка в семью Skooba #${applicationId} от **${applicantNick}** (<@${applicantId}>). Проверь канал рассмотрения заявок.`);
+        await safeDm(member, `Новая заявка в семью Skooba (${typeLabel}) #${applicationId} от **${applicantNick}** (<@${applicantId}>). Проверь канал рассмотрения заявок.`);
     }
 }
 async function publishApplication(guild, applicationId, userId, answers) {
@@ -332,14 +386,14 @@ async function publishApplication(guild, applicationId, userId, answers) {
     if (!application) {
         return;
     }
-    const reviewContent = buildReviewChannelContent(guild.id);
+    const reviewContent = buildReviewChannelContent(guild.id, getApplicationType(answers));
     const message = await channel.send({
         ...reviewContent,
         embeds: [buildApplicationEmbed(application, answers)],
         components: [reviewButtons(applicationId)],
     });
     db.prepare('UPDATE applications SET review_message_id = ? WHERE id = ?').run(message.id, applicationId);
-    await notifyStaffAndAdmins(guild, applicationId, userId, extractApplicantNick(answers));
+    await notifyStaffAndAdmins(guild, applicationId, userId, extractApplicantNick(answers), getApplicationType(answers));
 }
 async function refreshReviewMessage(guild, applicationId) {
     const application = getApplication(guild.id, applicationId);
@@ -383,20 +437,23 @@ async function resolveApplication(interaction, applicationId, action, rejectReas
         }
         return;
     }
+    const answers = parseAnswers(application.answers_json);
+    const applicationType = getApplicationType(answers);
     db.prepare(`UPDATE applications
      SET status = ?, reviewer_id = ?, reject_reason = ?, updated_at = unixepoch()
      WHERE id = ?`).run(action === 'accept' ? 'accepted' : 'rejected', interaction.user.id, action === 'reject' ? (rejectReason ?? null) : null, applicationId);
     if (action === 'accept') {
         const member = await interaction.guild.members.fetch(application.user_id).catch(() => null);
         if (member) {
-            await grantApplicationAcceptRoles(member);
+            await grantApplicationAcceptRoles(member, applicationType);
         }
     }
-    const answers = parseAnswers(application.answers_json);
     const updatedApplication = getApplication(interaction.guild.id, applicationId);
     audit(interaction.guild.id, `application.${action}`, { applicationId, rejectReason }, interaction.user.id, application.user_id);
     await sendToConfiguredChannel(interaction.guild, 'application_log_channel_id', `Заявка #${applicationId}: ${action === 'accept' ? 'принята' : 'отклонена'} модератором <@${interaction.user.id}>.${rejectReason ? ` Причина: ${rejectReason}` : ''}`);
-    await notifyApplicationUser(interaction.guild, applicationId, action === 'accept' ? 'Твоя заявка в Skooba принята.' : `Твоя заявка в Skooba отклонена.${rejectReason ? `\nПричина: ${rejectReason}` : ''}`);
+    await notifyApplicationUser(interaction.guild, applicationId, action === 'accept'
+        ? `Твоя заявка в Skooba (${applicationTypeLabel(applicationType)}) принята.`
+        : `Твоя заявка в Skooba (${applicationTypeLabel(applicationType)}) отклонена.${rejectReason ? `\nПричина: ${rejectReason}` : ''}`);
     const reviewMessageId = application.review_message_id;
     if (reviewMessageId) {
         const channel = await getConfiguredTextChannel(interaction.guild, 'application_review_channel_id');
